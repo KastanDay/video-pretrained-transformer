@@ -4,7 +4,7 @@ import os
 import sys
 import pathlib
 from os import path
-from lhotse import CutSet, RecordingSet, align_with_torchaudio, annotate_with_whisper
+from lhotse import Recording, RecordingSet, align_with_torchaudio, annotate_with_whisper
 from dataclasses import asdict
 from pydub import AudioSegment
 import torch
@@ -14,9 +14,9 @@ class CaptionPreprocessing:
     def __init__(self, debug = False):
         self.debug = debug
         # self.mp3_path = self.load_mp4_to_wav(path)
-        self.cut = None
 
     def process_mp4(self, path):
+        self.cut = None
         self.mp3_path = self.load_mp4_to_wav(path)
         # self.cut = None
 
@@ -29,8 +29,7 @@ class CaptionPreprocessing:
         # todo: more reliable way to get codc
         out_path = pathlib.Path(video_path)
         out_path = out_path.with_suffix('.wav')
-        
-        sound = AudioSegment.from_file(path) # format="mp4" (not required)
+        sound = AudioSegment.from_file(video_path) # format="mp4" (not required)
         sound.export(out_path, format="wav", parameters= ["-ac", "1"])
         return out_path.as_posix()
 
@@ -49,10 +48,10 @@ class CaptionPreprocessing:
         """
         def get_cut(path): 
             success = False
-            
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            dir = '/'.join(path.split("/")[:-1])
-            recordings = RecordingSet.from_dir(dir, pattern="*.wav")
+            # dir = '/'.join(path.split("/")[:-1])
+            recording = Recording.from_file(path)
+            recordings = RecordingSet.from_recordings([recording])
             # Temporary workaround for interval tree error
             index = 0
             while not success:
@@ -90,7 +89,7 @@ class CaptionPreprocessing:
                 # print("SUPERVISION", supervision)
                 return
             return time_dict_list
-        
+
         if not self.cut:
             try:
                 self.cut = get_cut(self.mp3_path)
@@ -99,8 +98,9 @@ class CaptionPreprocessing:
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
                 print(exc_type, fname, exc_tb.tb_lineno)
                 return
-
+        
         time_dict_list = to_time_dict()
+        # print(time_dict_list)
         curr_dict_list = []
         index = 0
         while index < (len(time_dict_list)):
