@@ -1,4 +1,4 @@
-from predict import Predictor
+from data_preprocessing.openpsg_inference.scene_graph_predict import Predictor
 import os
 
 
