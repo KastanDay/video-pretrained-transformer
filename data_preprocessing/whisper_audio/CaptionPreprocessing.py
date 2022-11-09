@@ -8,21 +8,35 @@ from lhotse import Recording, RecordingSet, align_with_torchaudio, annotate_with
 from dataclasses import asdict
 from pydub import AudioSegment
 import torch
+import json
 
 class CaptionPreprocessing:
     # Takes in a path to an mp4 file, converts it to wav
     def __init__(self, debug = False):
         self.debug = debug
-        # self.mp3_path = self.load_mp4_to_wav(path)
+        # self.wav_path = self.load_mp4_to_wav(path)
 
     def process_mp4(self, path):
         self.cut = None
-        self.mp3_path = self.load_mp4_to_wav(path)
+        self.wav_path = self.load_mp4_to_wav(path)
         # self.cut = None
 
+    def load_mp4_to_wav_with_outpath(self, video_path: str, out_dir: str):
+        # Have dedicated 
+        # Either save in M4A or delete after
+        self.cut = None
+        out_path = pathlib.Path(video_path)
+        out_path =  pathlib.Path(out_path.with_suffix('.wav')).parts[-1]
+        out_path = pathlib.Path(out_dir + "/" + out_path)
+        sound = AudioSegment.from_file(video_path) # format="mp4" (not required)
+        sound.export(out_path, format="wav", parameters= ["-ac", "1"])
+        self.wav_path = out_path.as_posix()
+        return
     # Converts mp4 to wav
     def load_mp4_to_wav(self, video_path: str):
         """convert my_file.mp4 to my_file.wav"""
+
+        # Might want to make it such that we specify outpath as well
         # command = "ffmpeg -i " + path + " -ab 160k -ac 1 -ar 16000 -vn " + path_to_output_wav
         # subprocess.call(command, shell=True)
         
@@ -92,7 +106,7 @@ class CaptionPreprocessing:
 
         if not self.cut:
             try:
-                self.cut = get_cut(self.mp3_path)
+                self.cut = get_cut(self.wav_path)
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -118,4 +132,18 @@ class CaptionPreprocessing:
                     index += 1
             else:
                 break
+        self.curr_dict_list = curr_dict_list
         return curr_dict_list
+
+    def output_json(self, dir):
+        # Serializing json
+        json_object = json.dumps(self.curr_dict_list)
+        
+        # Parse path name, i.e. kastan/thesis/rick.wav -> rick
+        file_name = "/" + str(pathlib.Path(pathlib.PurePath(self.wav_path).parts[-1]).with_suffix(".json"))
+        print(dir)
+        print(file_name)
+        with open(dir + file_name, "w") as outfile:
+            outfile.write(json_object)
+
+        return
