@@ -29,7 +29,7 @@ class CaptionPreprocessing:
         out_path =  pathlib.Path(out_path.with_suffix('.wav')).parts[-1]
         out_path = pathlib.Path(out_dir + "/" + out_path)
         sound = AudioSegment.from_file(video_path) # format="mp4" (not required)
-        sound.export(out_path, format="wav", parameters= ["-ac", "1"])
+        sound.export(out_path, format="wav", parameters= ["-ac", "1"], codec='ac3')
         self.wav_path = out_path.as_posix()
         return
     # Converts mp4 to wav
@@ -66,20 +66,25 @@ class CaptionPreprocessing:
             # dir = '/'.join(path.split("/")[:-1])
             recording = Recording.from_file(path)
             recordings = RecordingSet.from_recordings([recording])
+            
+            # TODO: This is causing problems again. need more help here.
             # Temporary workaround for interval tree error
             index = 0
             while not success:
                 index += 1
                 # More than 10 failed attempts
+                print("One failed get_cut")
                 if index > 10:
+                    print("Failed too many times, can't annotate.")
                     raiseExceptions("Can not annotate this cut")
                 try:
                     cuts = annotate_with_whisper(recordings, device = device)
                     cuts_aligned = align_with_torchaudio(cuts)
+                    print("Successfully got cuts_aligned")
                     for cut in cuts_aligned:
                         return asdict(cut)
-                except ValueError or AssertionError:
-                    print("ERROR... restarting")
+                except ValueError or AssertionError as e:
+                    print("ERROR... restarting. ", e)
 
         def to_time_dict():
             time_dict_list = []
@@ -106,6 +111,7 @@ class CaptionPreprocessing:
 
         if not self.cut:
             try:
+                print("Getting cut")
                 self.cut = get_cut(self.wav_path)
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -119,6 +125,7 @@ class CaptionPreprocessing:
         index = 0
         while index < (len(time_dict_list)):
             if index + threshold < len(time_dict_list):
+                print("In while index< leng(timedict)")
                 # If the start and end time of n words is within m seconds, add to the list of dictionaries
                 # a dictionary with n words
                 if time_dict_list[index + threshold - 1]["start"] - time_dict_list[index]["end"] <= time:
@@ -132,6 +139,7 @@ class CaptionPreprocessing:
                     index += 1
             else:
                 break
+        # this is the list of words, with timestamps
         self.curr_dict_list = curr_dict_list
         return curr_dict_list
 
