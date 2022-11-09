@@ -7,8 +7,10 @@ import ray
 import subprocess
 import shlex
 
-
+NUM_THREADS = 8
 INPUT_DIR_TO_TRANSCRIBE = '/mnt/storage_ssd/yt1b_train_slice'
+
+# TODO: Run on GPU. See if we can save time by not re-instantiating the model for each sample?
 
 @ray.remote
 def parallel_caption_extraction(file_batch, itr):
@@ -19,6 +21,15 @@ def parallel_caption_extraction(file_batch, itr):
     start = time.time()
     for index, file in enumerate(file_batch):
         try:
+            # check if output already exists
+            out_path = pathlib.Path(file)
+            out_path =  pathlib.Path(out_path.with_suffix('.wav')).parts[-1]
+            out_path = pathlib.Path(INPUT_DIR_TO_TRANSCRIBE + "_wav" + "/" + out_path)
+            if os.path.exists(out_path):
+                print(f'Input file: f{file} -- already processed, skipping')
+                continue
+            
+            # MAIN: run whisper
             process.load_mp4_to_wav_with_outpath(file, out_dir = INPUT_DIR_TO_TRANSCRIBE + "_wav")
             process.get_segments_thresholded()
             process.output_json(INPUT_DIR_TO_TRANSCRIBE + "_json")
@@ -31,8 +42,10 @@ def parallel_caption_extraction(file_batch, itr):
         print(f"⏰ Time to Whisper the file: {(time.time() - start)/60:.2f} minutes\n🔮 Estimated total runtime: { ((time.time() - start)/60) / ((index+1)/len(file_batch)) :.2f} minutes.\nVideo filesize: {os.path.getsize(file)/1e6:.2f} MB\n")
         start = time.time()
             
-    with open(f'/mnt/storage_ssd/yt_train_1b_slice_failed_files_{itr}.json', 'w') as f:
-        json.dump(failed_files, f, indent=2)
+    # TODO: this line was erroring out.
+    # TODO: "TypeError: Object of type PosixPath is not JSON serializable"
+    # with open(f'/mnt/storage_ssd/yt_train_1b_slice_failed_files_{itr}.json', 'w') as f:
+    #     json.dump(failed_files, f, indent=2)
         
 def make_batch(items, batch_size):
     """
@@ -43,8 +56,6 @@ def make_batch(items, batch_size):
 
 def main():
     """ MAIN """
-    NUM_THREADS = 9
-    
     ray.shutdown()
     ray.init(num_cpus = NUM_THREADS)
     
@@ -54,8 +65,10 @@ def main():
     files = list(dir_path.iterdir())
     print("Number of files:", len(files))
     
-    # batches = make_batch(files, NUM_THREADS)
-    batches = [files]
+    if NUM_THREADS == 1:
+        batches = [files]
+    else:
+        batches = make_batch(files, NUM_THREADS)
     
     if not os.path.isdir(INPUT_DIR_TO_TRANSCRIBE + "_wav"):
         os.mkdir(INPUT_DIR_TO_TRANSCRIBE + "_wav")
