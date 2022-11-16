@@ -101,7 +101,7 @@ class CaptionPreprocessing:
                     # Catch "music" as it doesn't carry semantic meaning, and skip fake text (emojis)
 
                     if (supervision is None) or (supervision['alignment'] is None) or (supervision['text'] is None) or supervision['text'] == 'Music':
-                        print(supervision)
+                        # print(supervision)
                         continue
                     for word in supervision['alignment']['word']:
                         new_dict = {"word": word.symbol, "start": word.start, "end": word.start + word.duration}
