@@ -4,7 +4,8 @@ import os
 import sys
 import pathlib
 from os import path
-from lhotse import Recording, RecordingSet, align_with_torchaudio, annotate_with_whisper
+from lhotse import Recording, RecordingSet, align_with_torchaudio
+from lhotse import annotator_lhotse
 from dataclasses import asdict
 from pydub import AudioSegment
 import torch
@@ -12,8 +13,11 @@ import json
 
 class CaptionPreprocessing:
     # Takes in a path to an mp4 file, converts it to wav
-    def __init__(self, debug = False):
+    def __init__(self, device, debug = False):
         self.debug = debug
+        # Model size, device
+        self.device = device
+        self.whisper_model = annotator_lhotse("base", device = self.device)
         # self.wav_path = self.load_mp4_to_wav(path)
 
     def process_mp4(self, path):
@@ -62,25 +66,27 @@ class CaptionPreprocessing:
         """
         def get_cut(path): 
             success = False
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # device = "cuda" if torch.cuda.is_available() else "cpu"
+            # print("👾 Device:", device)
             # dir = '/'.join(path.split("/")[:-1])
+            print(path)
+
             recording = Recording.from_file(path)
             recordings = RecordingSet.from_recordings([recording])
-            
             # TODO: This is causing problems again. need more help here.
             # Temporary workaround for interval tree error
             index = 0
             while not success:
                 index += 1
                 # More than 10 failed attempts
-                print("One failed get_cut")
+                # print("One failed get_cut")
                 if index > 10:
                     print("Failed too many times, can't annotate.")
                     raiseExceptions("Can not annotate this cut")
                 try:
-                    cuts = annotate_with_whisper(recordings, device = device)
-                    cuts_aligned = align_with_torchaudio(cuts)
-                    print("Successfully got cuts_aligned")
+                    cuts = self.whisper_model.yield_annotated_recordings(recordings)
+                    cuts_aligned = align_with_torchaudio(cuts, device = self.device)
+                    # print("Successfully got cuts_aligned")
                     for cut in cuts_aligned:
                         return asdict(cut)
                 except ValueError or AssertionError as e:
@@ -116,7 +122,7 @@ class CaptionPreprocessing:
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                print(exc_type, fname, exc_tb.tb_lineno)
+                print("could not get cut:", exc_type, fname, exc_tb.tb_lineno)
                 return
         
         time_dict_list = to_time_dict()
@@ -125,7 +131,7 @@ class CaptionPreprocessing:
         index = 0
         while index < (len(time_dict_list)):
             if index + threshold < len(time_dict_list):
-                print("In while index< leng(timedict)")
+                # print("In while index< leng(timedict)")
                 # If the start and end time of n words is within m seconds, add to the list of dictionaries
                 # a dictionary with n words
                 if time_dict_list[index + threshold - 1]["start"] - time_dict_list[index]["end"] <= time:
