@@ -96,10 +96,17 @@ class CaptionPreprocessing:
         def to_time_dict():
             time_dict_list = []
             supervision = "ERROR"
+            non_english = 0
             try:
                 for supervision in self.cut['supervisions']:
                     # Catch "music" as it doesn't carry semantic meaning, and skip fake text (emojis)
-
+                    if supervision['language'] and supervision['language'] != 'en':
+                        non_english += 1
+                        if non_english > 4:
+                            print("Not English... exiting")
+                            return []
+                        continue
+                        
                     if (supervision is None) or (supervision['alignment'] is None) or (supervision['text'] is None) or supervision['text'] == 'Music':
                         # print(supervision)
                         continue
@@ -151,6 +158,9 @@ class CaptionPreprocessing:
         return curr_dict_list
 
     def output_json(self, dir):
+        if not self.curr_dict_list:
+            print("Caption output is empty. Returning...")
+            return
         # Serializing json
         json_object = json.dumps(self.curr_dict_list)
         
