@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pydub import AudioSegment
 import torch
 import json
+import jsonlines
 
 class CaptionPreprocessing:
     # Takes in a path to an mp4 file, converts it to wav
@@ -154,10 +155,11 @@ class CaptionPreprocessing:
         json_object = json.dumps(self.curr_dict_list)
         
         # Parse path name, i.e. kastan/thesis/rick.wav -> rick
-        file_name = "/" + str(pathlib.Path(pathlib.PurePath(self.wav_path).parts[-1]).with_suffix(".json"))
-        print(dir)
-        print(file_name)
-        with open(dir + file_name, "w") as outfile:
-            outfile.write(json_object)
-
+        # file_name = "/" + str(pathlib.Path(pathlib.PurePath(self.wav_path).parts[-1]).with_suffix(".json"))
+        fp = dir + "_output.jsonl"
+        # print(file_name)
+        # with open(dir + file_name, "w") as outfile:
+        #     outfile.write(json_object)
+        with jsonlines.open(fp, mode='a') as writer:
+            writer.write(json_object)
         return
