@@ -1,7 +1,12 @@
-import ray 
+import os
+import time
+import glob
+import pathlib
 import subprocess
 import shlex
 import more_itertools
+import ray
+import json
 
 NUM_THREADS_IPROYAL = 55
 NUM_THREADS_STORM_RESIDENTIAL = 1
@@ -10,15 +15,33 @@ TOTAL_THREADS = NUM_THREADS_IPROYAL + NUM_THREADS_STORM_RESIDENTIAL + NUM_THREAD
 
 YT_TO_DOWNLOAD_ID_LIST = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/train_id_collection/LONG_tail_train_id_list.txt"
 DOWNLOAD_ARCHIVE = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/train_id_collection/yt_1b_train_download_record_parallel_10_49.txt"
+# DOWNLOAD_ARCHIVE = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/quick_test_download_archive.txt"
+
+VIDEO_FILE_OUTPUT_DIR = "/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/parallel_56"
+# VIDEO_FILE_OUTPUT_DIR = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/start_location"
+
+def get_current_video_output_dir():
+
+  progress_file = f'current_video_download_destination.json'
+  progress_json = json.load(open(progress_file, 'r'))
+  last_completed_index = str(progress_json)
+
+def write_current_video_output_dir(progress_filepath, current_download_dest_path):
+
+  with open(progress_filepath, 'w') as f:
+      json.dump(current_download_dest_path, f, indent=2)
 
 @ray.remote(num_cpus = 0.01)
 def iproyal_dl(file_batch, proxy_address):
   """Take in batch of video_ids, download them all. save to same location, and use same download record... should be fine.
   If we restart, they won't re-download, and the threads won't try to download the same video at the same time.
   """
+  global VIDEO_FILE_OUTPUT_DIR # dynamically updates
+
   for video_id in file_batch:
+    print("Writing to: ", VIDEO_FILE_OUTPUT_DIR)
     golden_command = f"""yt-dlp -f 'bv*[height<=360]+ba/b[height<=480]' \
-    -P /mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/parallel_10_thru_49 \
+    -P {VIDEO_FILE_OUTPUT_DIR} \
     --download-archive {DOWNLOAD_ARCHIVE} \
     -P 'temp:/tmp' \
     -o '%(id)s_%(channel)s_%(view_count)s_%(title)s.%(ext)s' \
@@ -29,7 +52,7 @@ def iproyal_dl(file_batch, proxy_address):
     "{video_id}"
     """
     subprocess.run(shlex.split(golden_command))
-  return 
+  return
 
 @ray.remote(num_cpus = 0.01)
 def stormproxy_residential_dl(file_batch):
@@ -37,9 +60,12 @@ def stormproxy_residential_dl(file_batch):
   Stormproxy residential port
   69.30.217.114:19014
   """
+  global VIDEO_FILE_OUTPUT_DIR # dynamically updates
+
   for video_id in file_batch:
+    print("Writing to: ", VIDEO_FILE_OUTPUT_DIR)
     golden_command = f"""yt-dlp -f 'bv*[height<=360]+ba/b[height<=480]' \
-    -P /mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/parallel_10_thru_49 \
+    -P {VIDEO_FILE_OUTPUT_DIR} \
     --download-archive {DOWNLOAD_ARCHIVE} \
     -P 'temp:/tmp' \
     -o '%(id)s_%(channel)s_%(view_count)s_%(title)s.%(ext)s' \
@@ -50,16 +76,19 @@ def stormproxy_residential_dl(file_batch):
     "{video_id}"
     """
     subprocess.run(shlex.split(golden_command))
-  return 
+  return
 
 @ray.remote(num_cpus = 0.01)
 def raw_no_proxy_dl(file_batch):
   """
-  RAW connection, no proxy. Why not? 
+  RAW connection, no proxy. Why not?
   """
+  global VIDEO_FILE_OUTPUT_DIR # dynamically updates
+
   for video_id in file_batch:
+    print("Writing to: ", VIDEO_FILE_OUTPUT_DIR)
     golden_command = f"""yt-dlp -f 'bv*[height<=360]+ba/b[height<=480]' \
-    -P /mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/parallel_10_thru_49 \
+    -P {VIDEO_FILE_OUTPUT_DIR} \
     --download-archive {DOWNLOAD_ARCHIVE} \
     -P 'temp:/tmp' \
     -o '%(id)s_%(channel)s_%(view_count)s_%(title)s.%(ext)s' \
@@ -69,19 +98,28 @@ def raw_no_proxy_dl(file_batch):
     "{video_id}"
     """
     subprocess.run(shlex.split(golden_command))
-  return 
+  return
 
+import contextlib
 def make_download_list():
-  # Filter already downloaded vids:  
+  # Filter already downloaded vids:
   import csv
   with open(YT_TO_DOWNLOAD_ID_LIST) as csvfile:
     list_of_ids_to_download = list(csv.reader(csvfile))
   list_of_ids_to_download = [val[0] for val in list_of_ids_to_download if len(val) > 0]
   del list_of_ids_to_download[0] # delete header
 
-  with open(DOWNLOAD_ARCHIVE) as csvfile:
-    already_downloaded = list(csv.reader(csvfile))
+  # I had problems reading "null" values form csv reader.. not sure why.
+  # but it shouldn't matter cuz yt-dl checks against the list itself, too. This just speeds it up.
+  already_downloaded = []
+  with open(DOWNLOAD_ARCHIVE, errors='ignore') as csvfile:
+    with contextlib.suppress(Exception):
+      # already_downloaded = list(csv.reader(csvfile, strict=False))
+      csvread = csv.reader(csvfile, strict=False)
+      for i, row in enumerate(csvread):
+        already_downloaded.append(row)
   already_downloaded = [val[0].replace('youtube ', '') for val in already_downloaded]
+  print("Already downloaded", already_downloaded)
 
   remaining_to_download = set(list_of_ids_to_download) - set(already_downloaded)
   print(f"Total to download:\t\t\t {len(list_of_ids_to_download)}")
@@ -89,15 +127,38 @@ def make_download_list():
   print(f"Starting download of remaining:\t\t {len(remaining_to_download)}")
   return list(remaining_to_download)
 
+def constrain_max_files_per_folder():
+  """ if we have more than 50k files in a folder, start a new one. """
+  global VIDEO_FILE_OUTPUT_DIR
+
+  print("sleeping 10")
+  time.sleep(3) # every 10 min
+  while True:
+    out_dir = pathlib.Path(VIDEO_FILE_OUTPUT_DIR)
+
+    parallel_num = VIDEO_FILE_OUTPUT_DIR.split("_")[-1]
+    print("parallel_num: ", parallel_num)
+
+    files = glob.glob(os.path.join(out_dir, "*"))
+    print("files: ", len(files))
+
+    if True: #len(files) >= 50_000:
+      VIDEO_FILE_OUTPUT_DIR = '/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/end_new_location' # os.path.join(out_dir.parent, f"parallel_{int(parallel_num)+1}")
+      print("\n\n\n\nNew output dir: ", VIDEO_FILE_OUTPUT_DIR, "\n\n\n\n")
+      print("⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️")
+      break
+
+    # time.sleep(60*10) # check every 10 min
+
 def main():
   """ MAIN """
   ray.shutdown()
-  ray.init(include_dashboard = False)
-  
+  ray.init(include_dashboard=False)
+
   list_of_ids_to_download = make_download_list()
-  print(list_of_ids_to_download[:20])
+  print('\n'.join(list_of_ids_to_download[:10]))
   batches = list(more_itertools.divide(TOTAL_THREADS, list_of_ids_to_download))
-  
+
   # print batch stats
   counter = 0
   for i, val in enumerate(batches[0]):
@@ -107,16 +168,19 @@ def main():
   print(len(batches), " should equal num threads: ", TOTAL_THREADS)
   assert len(batches) == (TOTAL_THREADS)
 
-  # Launch parallel 
+  # Launch parallel
   assert len(new_iproyal_proxies) == NUM_THREADS_IPROYAL
   futures =      [iproyal_dl.remote(batches[i], proxy_address) for i, proxy_address in enumerate(new_iproyal_proxies)]
   # next set, use batches in index 50 to 89.
   # futures.extend([stormproxy_dl.remote(batches[i]) for i in range(NUM_THREADS_IPROYAL, NUM_THREADS_IPROYAL+NUM_THREADS_STORM_PROXY)])
   futures.extend([stormproxy_residential_dl.remote(batches[i]) for i in range(NUM_THREADS_IPROYAL, NUM_THREADS_IPROYAL+NUM_THREADS_STORM_RESIDENTIAL)])
   futures.extend([raw_no_proxy_dl.remote(batches[i]) for i in range(NUM_THREADS_IPROYAL+NUM_THREADS_STORM_RESIDENTIAL, TOTAL_THREADS)])
-  
+
+  # Dynamically change output dir
+  # constrain_max_files_per_folder() # TODO: Finish this.
+
   # make sure we launched all the jobs
-  assert len(futures) == TOTAL_THREADS
+  # assert len(futures) == TOTAL_THREADS
 
   # Retrieve results.
   all_results = ray.get(futures)
@@ -132,7 +196,7 @@ new_iproyal_proxies = [
   'socks5://14affc78050af:bd4bb8fa31@185.60.144.196:12324',
   'socks5://14affc78050af:bd4bb8fa31@185.60.144.98:12324',
   'socks5://14affc78050af:bd4bb8fa31@185.60.145.140:12324',
-  
+
   # new proxies (50)
   'socks5://14a49cc959431:a403d3be86@74.117.114.28:12324',
   'socks5://14a49cc959431:a403d3be86@74.117.115.10:12324',
@@ -185,6 +249,6 @@ new_iproyal_proxies = [
   'socks5://14a49cc959431:a403d3be86@74.117.114.208:12324',
   'socks5://14a49cc959431:a403d3be86@74.117.114.94:12324',
 ]
-  
+
 if __name__ == '__main__':
   main()

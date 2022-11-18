@@ -4,3 +4,6 @@
 [submodule "data_preprocessing/whisper_audio/lhotse_faster_whisper"]
 	path = data_preprocessing/whisper_audio/lhotse_faster_whisper
 	url = https://github.com/KastanDay/lhotse_faster_whisper
+[submodule "data_preprocessing/scene_graph/faster_OpenPSG"]
+	path = data_preprocessing/scene_graph/faster_OpenPSG
+	url = https://github.com/KastanDay/faster_OpenPSG
