@@ -59,6 +59,19 @@ class DataPreprocessor:
             self.video_dir_files.add(str(Path(video_dir_file).stem))
             self.stem_to_filename[str(Path(video_dir_file).stem)] = video_dir_file
 
+        self.audio_file_stems = []
+        self.stem_to_whisper = {}
+        with jsonlines.open(self.audio_jsonl) as reader:
+            for _, obj in enumerate(reader):
+                json_objs = json.loads(obj)
+                for json_obj in json_objs:
+                    self.audio_file_stems.append(json_obj['video_filename_stem'])
+
+                    if json_obj['video_filename_stem'] not in self.stem_to_whisper:
+                        self.stem_to_whisper[json_obj['video_filename_stem']] = []
+                    
+                    self.stem_to_whisper.append(json_obj)
+
 
 
     # def get_frames_for_segments(self, video_name, segments):
@@ -253,8 +266,10 @@ class DataPreprocessor:
     def construct_training_samples(self, video_name, output_path):
         # initialize empty sample
         whisper_segments = None
-        with open(self.audio_data_path+video_name+".json", "r") as whisper_f:
-            whisper_segments = json.load(whisper_f)
+        # with open(self.audio_data_path+video_name+".json", "r") as whisper_f:
+        #     whisper_segments = json.load(whisper_f)
+
+        whisper_segments = self.stem_to_whisper[video_name]
 
         if self.debug:
             print("Loaded Whisper Json file")
@@ -297,31 +312,31 @@ class DataPreprocessor:
             # Create a new directory because it does not exist
             os.makedirs(output_path)
         
-        # with jsonlines.open(self.audio_jsonl) as reader:
-        #     for obj_idx, obj in enumerate(reader):
-        #         print(obj)
-        #         1/0
 
-        all_whisper_files = os.listdir(self.audio_data_path)
-        for i in tqdm(range(len(all_whisper_files))):
-            f = all_whisper_files[i]
+                
+        # all_whisper_files = os.listdir(self.audio_data_path)
+        # for i in tqdm(range(len(all_whisper_files))):
+            # f = all_whisper_files[i]
 
-            suffix = Path(os.path.join(self.audio_data_path, f)).suffix
-            if suffix == ".json":
-                video_name = Path(os.path.join(self.audio_data_path, f)).stem
-                # todo: use os.path.join()
+            # suffix = Path(os.path.join(self.audio_data_path, f)).suffix
+            # if suffix == ".json":
 
-                if str(video_name) not in self.video_dir_files:
-                    # print(video_name)
-                    samples_not_found += 1
-                else:
+        for i in tqdm(range(len(self.audio_file_stems))):
+            video_name = self.audio_file_stems[i]
+            # video_name = Path(os.path.join(self.audio_data_path, f)).stem
+            # todo: use os.path.join()
 
-                    if self.debug:
-                        print("Constructing training samples...")
+            if str(video_name) not in self.video_dir_files:
+                # print(video_name)
+                samples_not_found += 1
+            else:
 
-                    self.construct_training_samples(video_name, output_path)
+                if self.debug:
+                    print("Constructing training samples...")
 
-                total_samples += 1
+                self.construct_training_samples(video_name, output_path)
+
+            total_samples += 1
         
         if self.debug:
             print(f"[WARNING] {samples_not_found}/{total_samples} are invalid")
