@@ -20,6 +20,7 @@ def parse_cmd_line_args():
 
     parser.add_argument('--video_path', type=str, help="path of video directory")
     parser.add_argument('--output_path', type=str, help="path of output directory")
+    parser.add_argument('--audio_jsonl', type=str, help="path to json lines files containing audios")
 
     args = parser.parse_args()
     print("args: ", args)
@@ -28,8 +29,9 @@ def parse_cmd_line_args():
 
 
 class DataPreprocessor: 
-    def __init__(self, video_data_path, num_frames=3, debug=True):
+    def __init__(self, video_data_path, audio_jsonl, num_frames=3, debug=True):
         self.video_data_path = video_data_path
+        self.audio_jsonl = audio_jsonl
         self.audio_data_path = str(self.video_data_path).replace(Path(self.video_data_path).name, Path(self.video_data_path).name + "_json")
 
         self.num_frames = num_frames
@@ -294,7 +296,11 @@ class DataPreprocessor:
         if not os.path.exists(output_path):
             # Create a new directory because it does not exist
             os.makedirs(output_path)
-
+        
+        # with jsonlines.open(self.audio_jsonl) as reader:
+        #     for obj_idx, obj in enumerate(reader):
+        #         print(obj)
+        #         1/0
 
         all_whisper_files = os.listdir(self.audio_data_path)
         for i in tqdm(range(len(all_whisper_files))):
@@ -326,6 +332,6 @@ if __name__ == "__main__":
     args = parse_cmd_line_args()
 
     # webm, mp4, avi, mkv
-    data_preprocessor = DataPreprocessor(video_data_path=args.video_path, debug=True)
+    data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, debug=True)
     data_preprocessor.process_using_audio_dir(args.output_path)
     

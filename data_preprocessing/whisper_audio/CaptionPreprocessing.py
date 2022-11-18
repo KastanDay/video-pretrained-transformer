@@ -4,7 +4,7 @@ import sys
 import pathlib
 from os import path
 import sys
-sys.path.append("./lhotse_holder/lhotse")
+sys.path.append("lhotse_faster_whisper")
 
 from lhotse import Recording, RecordingSet, align_with_torchaudio
 from lhotse import annotator_lhotse
