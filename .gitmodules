@@ -1,3 +1,6 @@
 [submodule "data_preprocessing/whisper_audio/lhotse"]
 	path = data_preprocessing/whisper_audio/lhotse
 	url = https://github.com/lhotse-speech/lhotse
+[submodule "data_preprocessing/whisper_audio/lhotse_faster_whisper"]
+	path = data_preprocessing/whisper_audio/lhotse_faster_whisper
+	url = https://github.com/KastanDay/lhotse_faster_whisper
