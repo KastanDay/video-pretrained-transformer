@@ -4,7 +4,8 @@ import sys
 import pathlib
 from os import path
 import sys
-sys.path.append("lhotse_faster_whisper")
+sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
+sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
 
 from lhotse import Recording, RecordingSet, align_with_torchaudio
 from lhotse import annotator_lhotse
@@ -18,10 +19,8 @@ class CaptionPreprocessing:
     # Takes in a path to an mp4 file, converts it to wav
     def __init__(self, debug = False):
         self.debug = debug
-        # Model size, device
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.whisper_model = annotator_lhotse("base", device = self.device)
-        # self.wav_path = self.load_mp4_to_wav(path)
 
     def process_mp4(self, path):
         self.cut = None
@@ -29,8 +28,6 @@ class CaptionPreprocessing:
         # self.cut = None
 
     def load_mp4_to_wav_with_outpath(self, video_path: str, out_dir: str):
-        print("in load_mp4_to_wav_with_outpath()")
-        # Have dedicated 
         # Either save in M4A or delete after
         self.video_path = video_path
         self.cut = None
@@ -44,12 +41,10 @@ class CaptionPreprocessing:
     # Converts mp4 to wav
     def load_mp4_to_wav(self, video_path: str):
         """convert my_file.mp4 to my_file.wav"""
-
         # Might want to make it such that we specify outpath as well
         # command = "ffmpeg -i " + path + " -ab 160k -ac 1 -ar 16000 -vn " + path_to_output_wav
         # subprocess.call(command, shell=True)
         
-        # todo: more reliable way to get codc
         out_path = pathlib.Path(video_path)
         out_path = out_path.with_suffix('.wav')
         sound = AudioSegment.from_file(video_path) # format="mp4" (not required)
@@ -74,7 +69,7 @@ class CaptionPreprocessing:
             # device = "cuda" if torch.cuda.is_available() else "cpu"
             # print("👾 Device:", device)
             # dir = '/'.join(path.split("/")[:-1])
-            print(path)
+            # print(path)
 
             recording = Recording.from_file(path)
             recordings = RecordingSet.from_recordings([recording])
@@ -95,7 +90,7 @@ class CaptionPreprocessing:
                     for cut in cuts_aligned:
                         return asdict(cut)
                 except ValueError or AssertionError as e:
-                    print("ERROR... restarting. ", e)
+                    print("❌  ERROR... restarting. ", e)
 
         def to_time_dict():
             time_dict_list = []
@@ -121,15 +116,11 @@ class CaptionPreprocessing:
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                # print(exc_type, fname, exc_tb.tb_lineno)
-                # print("CUT", self.cut)
-                # print("SUPERVISION", supervision)
                 return
             return time_dict_list
 
         if not self.cut:
             try:
-                print("Getting cut")
                 self.cut = get_cut(self.wav_path)
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -138,7 +129,6 @@ class CaptionPreprocessing:
                 return
         
         time_dict_list = to_time_dict()
-        # print(time_dict_list)
         curr_dict_list = []
         index = 0
         while index < (len(time_dict_list)):
@@ -171,7 +161,6 @@ class CaptionPreprocessing:
         if not self.curr_dict_list:
             print("Caption output is empty. Returning...")
             return
-        # Serializing json
         json_object = json.dumps(self.curr_dict_list)
         # Parse path name, i.e. kastan/thesis/rick.wav -> rick
         # file_name = "/" + str(pathlib.Path(pathlib.PurePath(self.wav_path).parts[-1]).with_suffix(".json"))

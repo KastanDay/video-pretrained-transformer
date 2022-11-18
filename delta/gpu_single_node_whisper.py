@@ -1,9 +1,11 @@
 import os # must be first
 os.environ['TRANSFORMERS_CACHE'] = '/tmp/huggingface_cache' # must be first
-import CaptionPreprocessing as CaptionPreprocessing
 
 import sys
-sys.path.append("./lhotse_holder/lhotse")
+# sys.path.append(os.path.join(os.getcwd(),"../data_preprocessing/whisper_audio"))
+sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio")
+import CaptionPreprocessing as CaptionPreprocessing
+print(sys.path)
 
 import pathlib
 import time
@@ -17,39 +19,32 @@ import psutil
 import shlex
 import more_itertools
 import threading
+import jsonlines
 
-
-# have (just 3-5) more threads than cores so that if one finishes early, it we will stil saturate the CPU longer...
-# dir_name = 'parallel_10_thru_49_part_2'
-dir_name = 'parallel_49'
-# dir_name = 'handpicked_downloads'
+dir_name = 'parallel_10'
 FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_output.jsonl'
 INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
 INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
 LOCAL_RESULTS_JSONL = f'/tmp/{dir_name}_output.jsonl'
 
-# TODO: Set huggingface cache to /tmp for faster model loading.
-
 # Good vals for Delta CPU nodes. 
-NUM_THREADS = 3
-NUM_CPUS = 1
-GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
+# NUM_THREADS = 3
+# NUM_CPUS = 1
+# GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 # Good vals for Delta GPU nodes. 
-# NUM_THREADS = 90
+# have (just 3-5) more threads than cores so that if one finishes early, it we will stil saturate the CPU longer...
+NUM_THREADS = 90
 # NUM_CPUS = 1
-# GPU_PER_PROCESS = 1/16 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
+GPU_PER_PROCESS = 1/16 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 
-# , num_gpus = GPU_PER_PROCESS
-@ray.remote(num_cpus = NUM_CPUS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
+@ray.remote(num_cpus=0.8, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
 def parallel_caption_extraction(file_batch, itr):
-    print("In parallel_caption_extraction.")
-    
-
-    # Write these to disk
-    failed_files = []
-    # start = time.time()
+    # todo: get around this this import, but idk why it won't recognize it unless it's in here...
+    sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio")
+    import CaptionPreprocessing as CaptionPreprocessing
+    start = time.monotonic()
     for index, file in enumerate(file_batch):
         process = None
         try:
@@ -62,34 +57,28 @@ def parallel_caption_extraction(file_batch, itr):
                 continue
             
             # MAIN: run whisper
-            print("Starting caption preprocessing")
             process = CaptionPreprocessing.CaptionPreprocessing()
             process.load_mp4_to_wav_with_outpath(file, out_dir = INPUT_DIR_TO_TRANSCRIBE + "_wav")
             process.get_segments_thresholded()
             process.output_json(INPUT_DIR_TO_TRANSCRIBE)
             print("✅ Success: ", file)
         except Exception as e:
+            # write failed files to jsonlines
             print(f"Error during whisper: {e}")
-            # We could do this if we don't want to count files that failed
-            failed_files.append(str(file))
+            failed_file_json_object = json.dumps(str(file))
+            error_filepath = INPUT_DIR_TO_TRANSCRIBE + "_whisper_errors.jsonl"
+            if not os.path.exists(error_filepath):
+                pathlib.Path(error_filepath).touch()
+            with jsonlines.open(error_filepath, mode='a') as writer:
+                writer.write(failed_file_json_object)
         finally:
             # memory savings
             if process:
                 del process
 
         # one file done        
-        # print(f"⏰ Time to Whisper the file: {(time.time() - start)/60:.2f} minutes\nVideo filesize: {os.path.getsize(file)/1e6:.2f} MB\n")
-        # start = time.time()
-            
-    # TODO: this line was erroring out.
-    # TODO: "TypeError: Object of type PosixPath is not JSON serializable"
-    # todo: all append to the same file.
-    try:
-        if len(failed_files) > 0:
-          with open(f'/tmp/whisper_failed_files_{itr}.json', 'w') as f:
-              json.dump(failed_files, f, indent=2)
-    except Exception as e:
-        print(f"Error writing failed files list: {e}")
+        print(f"⏰ Time to Whisper the file: {(time.monotonic() - start)/60:.2f} minutes\nVideo filesize: {os.path.getsize(file)/1e6:.2f} MB\n")
+        start = time.monotonic()
 
 def run_main():
     # init ray
@@ -102,7 +91,6 @@ def run_main():
     # assert ray.is_initialized() == True
     # print("🎯 Ray initialized.")
     
-    # TODO: renable this...
     rsync_inputs_to_workers() # blocking rsync call.
     
     # first call, then watch memory usage & restart as necessary
@@ -121,13 +109,13 @@ def run_main():
             whisper_thread = threading.Thread(target=main, name="whisper_thread") # , args=some_args
             whisper_thread.start()
             
-        time.sleep(60)
+        time.sleep(90)
         rsync_results_to_scratch()
 
 def main():
     """ MAIN """
     # ray.shutdown()
-    ray.init(num_gpus = 0, num_cpus = 2, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
+    ray.init(num_gpus = 4, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
     print_cluster_stats()
     start = time.time()
     
@@ -145,9 +133,6 @@ def main():
     # shuffle the list files
     # random.seed(42) # NO SEED, different shuffle each time.
     random.shuffle(files)
-    
-    print("MUST REMOVE THIS LINE destroyes all files. dddddddddddddddddddddd")
-    files = files[:3]
     
     if NUM_THREADS == 1:
         batches = [files]
@@ -172,16 +157,7 @@ def main():
     
     all_done = ray.get(all_result_futures)
     
-    # for i in range(0, len(all_result_futures)): 
-    #     # ray.wait(app_futures) catches ONE at a time. 
-    #     ready, not_ready = ray.wait(all_result_futures) # todo , fetch_local=False do not download object from remote nodes
-    #     print(f"👋 One thread done. Completed {i+1} of {len(batches)}, {(i+1)/len(batches)*100:.2f}%, ⏰ Elapsed time: {(time.time() - start)/60:.2f} min.\n🔮 Estimated total runtime: { ((time.time() - start)/60) / ((i+1)/len(batches)) :.2f} minutes.\n")
-    #     all_result_futures = not_ready
-    #     if not all_result_futures:
-    #         break
-
-    print(all_result_futures)
-    print("Len of all threads: ", len(all_result_futures))
+    print("Len of all threads: ", len(all_done))
     print("👉 Completed, finished main().")
 
 def rsync_inputs_to_workers():
@@ -197,7 +173,7 @@ def rsync_inputs_to_workers():
     SLEEP_TIME = 120
     # if we already have some video files, don't sleep for 2 min, just go. 
     if os.path.exists(INPUT_DIR_ON_SCRATCH):
-        SLEEP_TIME = 0
+        SLEEP_TIME = 30
     
     # video files
     if os.path.exists(INPUT_DIR_ON_SCRATCH):
