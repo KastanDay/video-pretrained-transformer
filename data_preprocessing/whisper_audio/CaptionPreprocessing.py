@@ -1,9 +1,11 @@
-
 from logging import raiseExceptions
 import os
 import sys
 import pathlib
 from os import path
+import sys
+sys.path.append("./lhotse_holder/lhotse")
+
 from lhotse import Recording, RecordingSet, align_with_torchaudio
 from lhotse import annotator_lhotse
 from dataclasses import asdict
@@ -14,10 +16,10 @@ import jsonlines
 
 class CaptionPreprocessing:
     # Takes in a path to an mp4 file, converts it to wav
-    def __init__(self, device, debug = False):
+    def __init__(self, debug = False):
         self.debug = debug
         # Model size, device
-        self.device = device
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.whisper_model = annotator_lhotse("base", device = self.device)
         # self.wav_path = self.load_mp4_to_wav(path)
 
@@ -27,8 +29,10 @@ class CaptionPreprocessing:
         # self.cut = None
 
     def load_mp4_to_wav_with_outpath(self, video_path: str, out_dir: str):
+        print("in load_mp4_to_wav_with_outpath()")
         # Have dedicated 
         # Either save in M4A or delete after
+        self.video_path = video_path
         self.cut = None
         out_path = pathlib.Path(video_path)
         out_path =  pathlib.Path(out_path.with_suffix('.wav')).parts[-1]
@@ -145,9 +149,15 @@ class CaptionPreprocessing:
                 if time_dict_list[index + threshold - 1]["start"] - time_dict_list[index]["end"] <= time:
                     # Get overarching caption for this time segment
                     caption = " ".join([dic["word"] for dic in time_dict_list[index: index + threshold]])
-                    new_dict = {"caption": caption,"start": time_dict_list[index]["start"], "end": time_dict_list[index + threshold - 1]["end"],
-                    "segment_word_list": time_dict_list[index: index + threshold]}
-                    curr_dict_list.append(new_dict)
+                    fifteen_word_video_segment_captions = {
+                        "caption": caption,
+                        "start": time_dict_list[index]["start"], 
+                        "end": time_dict_list[index + threshold - 1]["end"],
+                        "segment_word_list": time_dict_list[index: index + threshold],
+                        "video_filename_stem": str(pathlib.Path(self.video_path).stem),
+                        "video_filepath": str(pathlib.Path(self.video_path)),
+                        }
+                    curr_dict_list.append(fifteen_word_video_segment_captions)
                     index += threshold
                 else:
                     index += 1
@@ -163,13 +173,9 @@ class CaptionPreprocessing:
             return
         # Serializing json
         json_object = json.dumps(self.curr_dict_list)
-        
         # Parse path name, i.e. kastan/thesis/rick.wav -> rick
         # file_name = "/" + str(pathlib.Path(pathlib.PurePath(self.wav_path).parts[-1]).with_suffix(".json"))
         fp = dir + "_output.jsonl"
-        # print(file_name)
-        # with open(dir + file_name, "w") as outfile:
-        #     outfile.write(json_object)
         with jsonlines.open(fp, mode='a') as writer:
             writer.write(json_object)
         return
