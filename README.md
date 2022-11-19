@@ -7,6 +7,8 @@ Building my own version of OPT-175B + CLIP + others. Pre-trained from scratch on
 ```bash
 # Install `git-lfs` (via apt or brew)
 brew install git-lfs
+-OR-
+conda install -c conda-forge -y git-lfs
 # Start git-lfs
 git-lfs install
 ```
