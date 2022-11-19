@@ -13,35 +13,37 @@ NUM_THREADS_STORM_RESIDENTIAL = 1
 NUM_THREADS_RAW_NO_PROXY = 10
 TOTAL_THREADS = NUM_THREADS_IPROYAL + NUM_THREADS_STORM_RESIDENTIAL + NUM_THREADS_RAW_NO_PROXY
 
-YT_TO_DOWNLOAD_ID_LIST = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/train_id_collection/LONG_tail_train_id_list.txt"
-DOWNLOAD_ARCHIVE = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/train_id_collection/yt_1b_train_download_record_parallel_10_49.txt"
+BASE_DIR = '/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/train_id_collection/'
+YT_TO_DOWNLOAD_ID_LIST = os.path.join(BASE_DIR, "LONG_tail_train_id_list.txt")
+DOWNLOAD_ARCHIVE = os.path.join(BASE_DIR, "yt_1b_train_download_record_parallel_10_49.txt")
+PROGRESS_FILEPATH = os.path.join(BASE_DIR, 'current_yt_1b_download_destination_path.json')
+
+# for TESTING
 # DOWNLOAD_ARCHIVE = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/quick_test_download_archive.txt"
+# VIDEO_FILE_OUTPUT_DIR = "/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/parallel_36"
 
-VIDEO_FILE_OUTPUT_DIR = "/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/parallel_56"
-# VIDEO_FILE_OUTPUT_DIR = "/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/start_location"
+def get_current_video_dest_path():
+  progress_json = json.load(open(PROGRESS_FILEPATH, 'r'))
+  current_video_file_output_dir = str(progress_json)
+  return current_video_file_output_dir
 
-def get_current_video_output_dir():
-
-  progress_file = f'current_video_download_destination.json'
-  progress_json = json.load(open(progress_file, 'r'))
-  last_completed_index = str(progress_json)
-
-def write_current_video_output_dir(progress_filepath, current_download_dest_path):
-
-  with open(progress_filepath, 'w') as f:
-      json.dump(current_download_dest_path, f, indent=2)
+def write_current_video_dest_path(current_video_file_output_dir):
+  with open(PROGRESS_FILEPATH, 'w') as f:
+      json.dump(current_video_file_output_dir, f, indent=2)
 
 @ray.remote(num_cpus = 0.01)
 def iproyal_dl(file_batch, proxy_address):
   """Take in batch of video_ids, download them all. save to same location, and use same download record... should be fine.
   If we restart, they won't re-download, and the threads won't try to download the same video at the same time.
   """
-  global VIDEO_FILE_OUTPUT_DIR # dynamically updates
+  # every 10 videos, check if we have more than 50k files in a folder. if so, start a new one.
 
-  for video_id in file_batch:
-    print("Writing to: ", VIDEO_FILE_OUTPUT_DIR)
+  current_video_file_output_dir = get_current_video_dest_path()
+  for idx, video_id in enumerate(file_batch):
+    if idx != 0 and idx % 5 == 0: # every 5 videos
+      current_video_file_output_dir = get_current_video_dest_path()
     golden_command = f"""yt-dlp -f 'bv*[height<=360]+ba/b[height<=480]' \
-    -P {VIDEO_FILE_OUTPUT_DIR} \
+    -P {current_video_file_output_dir} \
     --download-archive {DOWNLOAD_ARCHIVE} \
     -P 'temp:/tmp' \
     -o '%(id)s_%(channel)s_%(view_count)s_%(title)s.%(ext)s' \
@@ -60,12 +62,13 @@ def stormproxy_residential_dl(file_batch):
   Stormproxy residential port
   69.30.217.114:19014
   """
-  global VIDEO_FILE_OUTPUT_DIR # dynamically updates
-
-  for video_id in file_batch:
-    print("Writing to: ", VIDEO_FILE_OUTPUT_DIR)
+  current_video_file_output_dir = get_current_video_dest_path()
+  for idx, video_id in enumerate(file_batch):
+    if idx != 0 and idx % 5 == 0: # every 5 videos
+      current_video_file_output_dir = get_current_video_dest_path()
+    
     golden_command = f"""yt-dlp -f 'bv*[height<=360]+ba/b[height<=480]' \
-    -P {VIDEO_FILE_OUTPUT_DIR} \
+    -P {current_video_file_output_dir} \
     --download-archive {DOWNLOAD_ARCHIVE} \
     -P 'temp:/tmp' \
     -o '%(id)s_%(channel)s_%(view_count)s_%(title)s.%(ext)s' \
@@ -83,12 +86,13 @@ def raw_no_proxy_dl(file_batch):
   """
   RAW connection, no proxy. Why not?
   """
-  global VIDEO_FILE_OUTPUT_DIR # dynamically updates
-
-  for video_id in file_batch:
-    print("Writing to: ", VIDEO_FILE_OUTPUT_DIR)
+  current_video_file_output_dir = get_current_video_dest_path()
+  for idx, video_id in enumerate(file_batch):
+    if idx != 0 and idx % 5 == 0: # every 5 videos
+      current_video_file_output_dir = get_current_video_dest_path()
+    
     golden_command = f"""yt-dlp -f 'bv*[height<=360]+ba/b[height<=480]' \
-    -P {VIDEO_FILE_OUTPUT_DIR} \
+    -P {current_video_file_output_dir} \
     --download-archive {DOWNLOAD_ARCHIVE} \
     -P 'temp:/tmp' \
     -o '%(id)s_%(channel)s_%(view_count)s_%(title)s.%(ext)s' \
@@ -99,6 +103,25 @@ def raw_no_proxy_dl(file_batch):
     """
     subprocess.run(shlex.split(golden_command))
   return
+
+@ray.remote(num_cpus = 0.01)
+def constrain_max_files_per_folder():
+  """ Increment the output dir (parallel_dir) number after 25k files (not exact), check every 5 min for performance. """
+  while True:
+    current_video_file_output_dir = get_current_video_dest_path()
+    current_file_size = len(glob.glob(os.path.join(current_video_file_output_dir, '*')))
+    print(f"Num files in destination: {current_file_size}")
+    
+    if current_file_size >= 25_000:
+      parallel_num = str(current_video_file_output_dir).split("_")[-1]
+      new_video_file_output_dir = os.path.join(pathlib.Path(current_video_file_output_dir).parent, f"parallel_{int(parallel_num)+1}")
+      print("Incrementing the parallel download path to: ", parallel_num)
+      print(new_video_file_output_dir)
+      new_video_file_output_dir.mkdir(parents=True, exist_ok=True)
+      write_current_video_dest_path(str(new_video_file_output_dir)) # write the new path to the progress file
+    
+    time.sleep(60 * 5) # every 5 minutes
+  return current_file_size
 
 import contextlib
 def make_download_list():
@@ -127,34 +150,15 @@ def make_download_list():
   print(f"Starting download of remaining:\t\t {len(remaining_to_download)}")
   return list(remaining_to_download)
 
-def constrain_max_files_per_folder():
-  """ if we have more than 50k files in a folder, start a new one. """
-  global VIDEO_FILE_OUTPUT_DIR
-
-  print("sleeping 10")
-  time.sleep(3) # every 10 min
-  while True:
-    out_dir = pathlib.Path(VIDEO_FILE_OUTPUT_DIR)
-
-    parallel_num = VIDEO_FILE_OUTPUT_DIR.split("_")[-1]
-    print("parallel_num: ", parallel_num)
-
-    files = glob.glob(os.path.join(out_dir, "*"))
-    print("files: ", len(files))
-
-    if True: #len(files) >= 50_000:
-      VIDEO_FILE_OUTPUT_DIR = '/home/kastan/thesis/video-pretrained-transformer/downloading_formalized/end_new_location' # os.path.join(out_dir.parent, f"parallel_{int(parallel_num)+1}")
-      print("\n\n\n\nNew output dir: ", VIDEO_FILE_OUTPUT_DIR, "\n\n\n\n")
-      print("⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️⭐️")
-      break
-
-    # time.sleep(60*10) # check every 10 min
-
 def main():
   """ MAIN """
   ray.shutdown()
   ray.init(include_dashboard=False)
+  futures = []
 
+  # Dynamically change output dir; no more than 25k files per folder
+  futures.extend([constrain_max_files_per_folder.remote()])
+  
   list_of_ids_to_download = make_download_list()
   print('\n'.join(list_of_ids_to_download[:10]))
   batches = list(more_itertools.divide(TOTAL_THREADS, list_of_ids_to_download))
@@ -170,20 +174,18 @@ def main():
 
   # Launch parallel
   assert len(new_iproyal_proxies) == NUM_THREADS_IPROYAL
-  futures =      [iproyal_dl.remote(batches[i], proxy_address) for i, proxy_address in enumerate(new_iproyal_proxies)]
+  futures.extend([iproyal_dl.remote(batches[i], proxy_address) for i, proxy_address in enumerate(new_iproyal_proxies)])
   # next set, use batches in index 50 to 89.
   # futures.extend([stormproxy_dl.remote(batches[i]) for i in range(NUM_THREADS_IPROYAL, NUM_THREADS_IPROYAL+NUM_THREADS_STORM_PROXY)])
   futures.extend([stormproxy_residential_dl.remote(batches[i]) for i in range(NUM_THREADS_IPROYAL, NUM_THREADS_IPROYAL+NUM_THREADS_STORM_RESIDENTIAL)])
   futures.extend([raw_no_proxy_dl.remote(batches[i]) for i in range(NUM_THREADS_IPROYAL+NUM_THREADS_STORM_RESIDENTIAL, TOTAL_THREADS)])
 
-  # Dynamically change output dir
-  # constrain_max_files_per_folder() # TODO: Finish this.
-
   # make sure we launched all the jobs
-  # assert len(futures) == TOTAL_THREADS
+  assert len(futures) == TOTAL_THREADS + 1 # +1 for the constrain_max_files_per_folder
 
   # Retrieve results.
   all_results = ray.get(futures)
+  constrain_max_files_future
 
   print(len(all_results))
   print(all_results)
