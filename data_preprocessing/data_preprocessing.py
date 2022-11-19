@@ -27,7 +27,6 @@ def parse_cmd_line_args():
     
     return args
 
-
 class DataPreprocessor: 
     def __init__(self, video_data_path, audio_jsonl, num_frames=3, debug=True):
         self.video_data_path = video_data_path
@@ -48,9 +47,6 @@ class DataPreprocessor:
         if self.debug:
             print(f"Done setting up CLIP...")
 
-        # self.scene_graph_predictor = Predictor()
-        # self.scene_graph_predictor.setup()
-
         self.video_dir_files = set()
         self.stem_to_filename = {}
         
@@ -70,101 +66,7 @@ class DataPreprocessor:
                     if json_obj['video_filename_stem'] not in self.stem_to_whisper:
                         self.stem_to_whisper[json_obj['video_filename_stem']] = []
                     
-                    self.stem_to_whisper.append(json_obj)
-
-
-
-    # def get_frames_for_segments(self, video_name, segments):
-        # if len(segments) == 0:
-        #     return None
-        
-        # curr_segment_idx = 0
-        # curr_segment_start = segments[0]['start']
-        # curr_segment_end = segments[0]['end']
-
-        # # segment_frames = [[] for i in range(len(segments))]
-        # segment_frames = []
-        # used_frames = [[] for i in range(len(segments))]
-
-        # # assert os.path.exists(self.video_data_path+video_name+extension)
-        # assert os.path.exists(self.stem_to_filename[str(os.path.join(video_name))])
-
-        # # cap = cv2.VideoCapture(self.video_data_path+video_name+extension)
-        # cap = cv2.VideoCapture(self.stem_to_filename[str(os.path.join(video_name))])
-        # fps = cap.get(cv2.CAP_PROP_FPS)
-
-        # frame_width = int(cap.get(3))
-        # frame_height = int(cap.get(4))
-        
-        # size = (frame_width, frame_height)
-
-        # timestamps = [cap.get(cv2.CAP_PROP_POS_MSEC)]
-        # curr_timestamp = 0.0
-
-        # segments_done = False
-        
-    #     if self.debug:
-    #         print(f"Getting frames for {len(segments)} segments...")
-
-    #     while(cap.isOpened()):
-    #         frame_exists, curr_frame = cap.read()
-    #         # print(f"Getting frame {curr_timestamp}...")
-            
-    #         if frame_exists:
-    #             curr_timestamp = cap.get(cv2.CAP_PROP_POS_MSEC)
-    #             timestamps.append(curr_timestamp)
-
-    #             if (curr_timestamp/1000.0) < curr_segment_start:
-    #                 continue
-
-    #             else:
-    #                 if (curr_timestamp/1000.0) < curr_segment_end:
-    #                     # segment_frames[curr_segment_idx].append(curr_frame)
-    #                     segment_frames.append(curr_frame)
-    #                 else:
-    #                     curr_segment_start = segments[curr_segment_idx]['start']
-    #                     curr_segment_end = segments[curr_segment_idx]['end']
-
-    #                     sample_frame_idxs = np.linspace(0, len(segment_frames)-1, num=self.num_frames, dtype=int)
-    #                     used_frames[curr_segment_idx] = [segment_frames[frame_idx].tolist() for frame_idx in sample_frame_idxs]
-
-    #                     while True:
-    #                         if ((curr_timestamp/1000.0) > curr_segment_start) and ((curr_timestamp/1000.0) < curr_segment_end):
-    #                             break
-
-    #                         if (curr_timestamp/1000.0) < curr_segment_start:
-    #                             break
-
-    #                         curr_segment_idx += 1
-                            
-    #                         if self.debug:
-    #                             print("Current segment: ", curr_segment_idx, " with length: ", segments[curr_segment_idx]['end']- segments[curr_segment_idx]['start'])
-
-    #                         segment_frames = []
-    #                         if curr_segment_idx >= len(segments):
-    #                             # print("segments done hit")
-    #                             segments_done = True
-    #                             break
-                        
-    #                         curr_segment_start = segments[curr_segment_idx]['start']
-    #                         curr_segment_end = segments[curr_segment_idx]['end']
-
-    #                     if segments_done:
-    #                         break
-                
-    #         else:
-    #             break
-        
-
-    #     # segment_frames[curr_segment_idx] = np.linspace(0, len(frames_list)-1, num=num_frames, dtype=int)
-        
-
-
-
-    #     cap.release()
-    #     # print(min(timestamps), max(timestamps))
-
-    #     return used_frames
+                    self.stem_to_whisper[json_obj['video_filename_stem']].append(json_obj)
 
     def get_frames_for_segments(self, video_name, segments):
         if len(segments) == 0:
@@ -216,7 +118,6 @@ class DataPreprocessor:
 
         return segment_frames
 
-
     def get_multimodal_features(self, video_name, segments, num_frames=3):
         segment_frames = self.get_frames_for_segments(video_name, segments)
         serialized_frames = []
@@ -257,11 +158,7 @@ class DataPreprocessor:
                 clip_features.append(image_features.cpu().numpy().tolist())
                 caption_features.append(text_features.cpu().numpy().tolist())
 
-
-
-
         return clip_features, caption_features, serialized_frames
-
 
     def construct_training_samples(self, video_name, output_path):
         # initialize empty sample
@@ -280,7 +177,6 @@ class DataPreprocessor:
 
         if self.debug:
             print("Obtained multimodal features")
-
         
         for i, (image_feature, caption_feature, segment_frames) in enumerate(zip(image_features, caption_features, segment_frames)):
             print(f"Processing segment {i+1} of {len(image_features)}")
@@ -312,41 +208,20 @@ class DataPreprocessor:
             # Create a new directory because it does not exist
             os.makedirs(output_path)
         
-
-                
-        # all_whisper_files = os.listdir(self.audio_data_path)
-        # for i in tqdm(range(len(all_whisper_files))):
-            # f = all_whisper_files[i]
-
-            # suffix = Path(os.path.join(self.audio_data_path, f)).suffix
-            # if suffix == ".json":
-
         for i in tqdm(range(len(self.audio_file_stems))):
             video_name = self.audio_file_stems[i]
-            # video_name = Path(os.path.join(self.audio_data_path, f)).stem
-            # todo: use os.path.join()
-
             if str(video_name) not in self.video_dir_files:
-                # print(video_name)
                 samples_not_found += 1
             else:
-
                 if self.debug:
                     print("Constructing training samples...")
-
                 self.construct_training_samples(video_name, output_path)
-
             total_samples += 1
-        
         if self.debug:
             print(f"[WARNING] {samples_not_found}/{total_samples} are invalid")
-                
-
 
 if __name__ == "__main__":
     args = parse_cmd_line_args()
-
-    # webm, mp4, avi, mkv
     data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, debug=True)
     data_preprocessor.process_using_audio_dir(args.output_path)
     
