@@ -21,7 +21,7 @@ import more_itertools
 import threading
 import jsonlines
 
-dir_name = 'parallel_12'
+dir_name = 'parallel_13'
 FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_output.jsonl'
 INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
 INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
@@ -36,10 +36,10 @@ LOCAL_RESULTS_JSONL = f'/tmp/{dir_name}_output.jsonl'
 # have (just 3-5) more threads than cores so that if one finishes early, it we will stil saturate the CPU longer...
 
 # THIS is GREAT balance on delta GPU, with CLIP running. 
-NUM_THREADS = 51 # first one always dies for some reason.
-NUM_CPU_CORES = 50
-NUM_GPUS = 4
-GPU_PER_PROCESS = 1/13 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+NUM_THREADS = 55*2 # first one always dies for some reason.
+NUM_CPU_CORES = 58*2
+NUM_GPUS = 7.5
+GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
 
 
@@ -56,9 +56,11 @@ def parallel_caption_extraction(file_batch, itr):
             out_path = pathlib.Path(file)
             out_path =  pathlib.Path(out_path.with_suffix('.wav')).parts[-1]
             out_path = pathlib.Path(INPUT_DIR_TO_TRANSCRIBE + "_wav" + "/" + out_path)
-            if os.path.exists(out_path):
-                print(f'Input file: f{file} -- already processed, skipping')
-                raise
+            
+            # todo: check if output exists in whisper file, if so skip, else try again. 
+            # if os.path.exists(out_path):
+            #     print(f'Input file: f{file} -- already processed, skipping')
+                
             
             # MAIN: run whisper
             process = CaptionPreprocessing.CaptionPreprocessing()

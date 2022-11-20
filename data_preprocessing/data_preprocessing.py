@@ -31,20 +31,21 @@ def parse_cmd_line_args():
     # output     = /tmp/parallel_10_clip_dataset.jsonl
     # whisper_in = /tmp/parallel_10_whisper_output.jsonl
     video_input_dir = pathlib.Path(args.video_path)
-    args.output_path = os.path.join(video_input_dir.parent, video_input_dir.stem + '_clip_output.jsonl')
-    args.audio_jsonl = os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl')
+    args.output_path = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_clip_output.jsonl'))
+    args.audio_jsonl = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
     return args
 
 class DataPreprocessor: 
-    def __init__(self, video_data_path, audio_jsonl, num_frames=3, debug=True):
+    def __init__(self, video_data_path, audio_jsonl, output_path, num_frames=3, debug=True):
         self.video_data_path = video_data_path
         self.audio_jsonl = audio_jsonl
-        self.audio_data_path = str(self.video_data_path).replace(Path(self.video_data_path).name, Path(self.video_data_path).name + "_json")
+        self.output_path= output_path
 
         self.num_frames = num_frames
         self.debug = debug
 
         # Load the model
+        # print("❌❌MAJOR WARNING❌❌: setting cuda to 8")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         # self.device = "cpu"
         print(f"Using {self.device}...")
@@ -167,7 +168,7 @@ class DataPreprocessor:
 
         return clip_features, caption_features, serialized_frames
 
-    def construct_training_samples(self, video_name, output_path):
+    def construct_training_samples(self, video_name):
         # initialize empty sample
         whisper_segments = None
         # with open(self.audio_data_path+video_name+".json", "r") as whisper_f:
@@ -186,7 +187,7 @@ class DataPreprocessor:
             print("Obtained multimodal features")
         
         # keep this ont the outside of the for loop for faster writing.
-        with jsonlines.open(output_path, mode='a') as writer:
+        with jsonlines.open(self.output_path, mode='a') as writer:
             for i, (image_feature, caption_feature, segment_frames) in enumerate(zip(image_features, caption_features, segment_frames)):
                 # print(f"Processing segment {i+1} of {len(image_features)}")
                 sample_dict = {
@@ -205,14 +206,10 @@ class DataPreprocessor:
         if self.debug:
             print("Constructed training samples")
             
-    def process_using_audio_dir(self, output_path):
+    def process_using_audio_dir(self):
         samples_not_found = 0
         total_samples = 0
 
-        if not os.path.exists(output_path):
-            # Create a new directory because it does not exist
-            os.makedirs(output_path)
-        
         for i in tqdm(range(len(self.audio_file_stems))):
             video_name = self.audio_file_stems[i]
             if str(video_name) not in self.video_dir_files:
@@ -220,13 +217,13 @@ class DataPreprocessor:
             else:
                 if self.debug:
                     print("Constructing training samples...")
-                self.construct_training_samples(video_name, output_path)
+                self.construct_training_samples(video_name)
             total_samples += 1
 
         print(f"[❌ ERROR ❌] {samples_not_found} of {total_samples} are invalid")
 
 if __name__ == "__main__":
     args = parse_cmd_line_args()
-    data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, debug=False)
-    data_preprocessor.process_using_audio_dir(args.output_path)
+    data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, output_path=args.output_path, debug=False)
+    data_preprocessor.process_using_audio_dir()
     
