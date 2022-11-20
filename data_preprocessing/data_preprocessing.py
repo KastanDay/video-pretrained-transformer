@@ -16,15 +16,23 @@ import json
 import json_numpy
 
 def parse_cmd_line_args():
+    """ Usage: 
+    $ python data_preprocessing.py  --video_path /tmp/parallel_12 --audio_jsonl /tmp/parallel_12_whisper_output.jsonl
+    """
     parser = argparse.ArgumentParser()
-
-    parser.add_argument('--video_path', type=str, help="path of video directory")
-    parser.add_argument('--output_path', type=str, help="path of output directory")
-    parser.add_argument('--audio_jsonl', type=str, help="path to json lines files containing audios")
-
-    args = parser.parse_args()
-    print("args: ", args)
+    parser.add_argument('--video_path', type=str, help="path of video directory (not individual files). Ex: `--video_path /tmp/parallel_12`")
     
+    # these are NOT NECESSARY, I construct it below. (using introduces error)
+    # parser.add_argument('--audio_jsonl', type=str, help="path to json lines files containing audios")
+    # parser.add_argument('--output_path', type=str, help="path of output directory") 
+    args = parser.parse_args()
+    
+    # Convert: /tmp/parallel_10   into:   
+    # output     = /tmp/parallel_10_clip_dataset.jsonl
+    # whisper_in = /tmp/parallel_10_whisper_output.jsonl
+    video_input_dir = pathlib.Path(args.video_path)
+    args.output_path = os.path.join(video_input_dir.parent, video_input_dir.stem + '_clip_output.jsonl')
+    args.audio_jsonl = os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl')
     return args
 
 class DataPreprocessor: 
@@ -38,9 +46,8 @@ class DataPreprocessor:
 
         # Load the model
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        if self.debug:
-            print(f"Using {self.device}...")
+        # self.device = "cpu"
+        print(f"Using {self.device}...")
 
         self.clip, self.clip_preprocess = clip.load('ViT-B/32', self.device)
 
@@ -178,24 +185,22 @@ class DataPreprocessor:
         if self.debug:
             print("Obtained multimodal features")
         
-        for i, (image_feature, caption_feature, segment_frames) in enumerate(zip(image_features, caption_features, segment_frames)):
-            print(f"Processing segment {i+1} of {len(image_features)}")
-            sample_dict = {
-                "filename": video_name,
-                "segment_length": whisper_segments[i]['end'] - whisper_segments[i]['start'],
-                "captions": whisper_segments[i]['caption'],
-                "segment_start_time": whisper_segments[i]['start'],
-                "segment_end_time": whisper_segments[i]['end'],
-                "frame_embeddings": image_feature,
-                "text_caption_embeddings": caption_feature,
-                # "scene_graph_embeddings": scene_graph_feature
-                "segment_frames": segment_frames
-            }
-
-            # TODO: Uncomment this code to start saving the files
-            # np.save(os.path.join(output_path, f"{video_name}_segment{i}"), sample_dict)
-            with jsonlines.open(os.path.join(output_path, f"dataset.jsonl"), mode='a') as writer:
-                writer.write(sample_dict)
+        # keep this ont the outside of the for loop for faster writing.
+        with jsonlines.open(output_path, mode='a') as writer:
+            for i, (image_feature, caption_feature, segment_frames) in enumerate(zip(image_features, caption_features, segment_frames)):
+                # print(f"Processing segment {i+1} of {len(image_features)}")
+                sample_dict = {
+                    "filename": video_name,
+                    "segment_length": whisper_segments[i]['end'] - whisper_segments[i]['start'],
+                    "captions": whisper_segments[i]['caption'],
+                    "segment_start_time": whisper_segments[i]['start'],
+                    "segment_end_time": whisper_segments[i]['end'],
+                    "frame_embeddings": image_feature,
+                    "text_caption_embeddings": caption_feature,
+                    # "scene_graph_embeddings": scene_graph_feature
+                    "segment_frames": segment_frames
+                }
+                writer.write(sample_dict) # WRITE output dataset line.
 
         if self.debug:
             print("Constructed training samples")
@@ -217,11 +222,11 @@ class DataPreprocessor:
                     print("Constructing training samples...")
                 self.construct_training_samples(video_name, output_path)
             total_samples += 1
-        if self.debug:
-            print(f"[WARNING] {samples_not_found}/{total_samples} are invalid")
+
+        print(f"[❌ ERROR ❌] {samples_not_found} of {total_samples} are invalid")
 
 if __name__ == "__main__":
     args = parse_cmd_line_args()
-    data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, debug=True)
+    data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, debug=False)
     data_preprocessor.process_using_audio_dir(args.output_path)
     

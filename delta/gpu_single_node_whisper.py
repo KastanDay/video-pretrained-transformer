@@ -21,7 +21,7 @@ import more_itertools
 import threading
 import jsonlines
 
-dir_name = 'parallel_10'
+dir_name = 'parallel_12'
 FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_output.jsonl'
 INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
 INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
@@ -34,9 +34,13 @@ LOCAL_RESULTS_JSONL = f'/tmp/{dir_name}_output.jsonl'
 
 # Good vals for Delta GPU nodes. 
 # have (just 3-5) more threads than cores so that if one finishes early, it we will stil saturate the CPU longer...
-NUM_THREADS = 90
-# NUM_CPUS = 1
-GPU_PER_PROCESS = 1/16 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
+
+# THIS is GREAT balance on delta GPU, with CLIP running. 
+NUM_THREADS = 51 # first one always dies for some reason.
+NUM_CPU_CORES = 50
+NUM_GPUS = 4
+GPU_PER_PROCESS = 1/13 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
 
 
 @ray.remote(num_cpus=0.8, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
@@ -61,6 +65,10 @@ def parallel_caption_extraction(file_batch, itr):
             process.load_mp4_to_wav_with_outpath(file, out_dir = INPUT_DIR_TO_TRANSCRIBE + "_wav")
             process.get_segments_thresholded()
             process.output_json(INPUT_DIR_TO_TRANSCRIBE)
+            
+            # todo: os.remove(file) -- this assumes that all files will be copied at the start, and that'll work first try.
+            # or save a list of already processed files.
+            
             print("✅ Success: ", file)
         except Exception as e:
             # write failed files to jsonlines
@@ -70,7 +78,7 @@ def parallel_caption_extraction(file_batch, itr):
             if not os.path.exists(error_filepath):
                 pathlib.Path(error_filepath).touch()
             with jsonlines.open(error_filepath, mode='a') as writer:
-                writer.write({"video_filepath": failed_file_json_object, "error": e})
+                writer.write({"video_filepath": failed_file_json_object, "error": str(e)}) 
         finally:
             # memory savings
             if process:
@@ -81,6 +89,8 @@ def parallel_caption_extraction(file_batch, itr):
         start = time.monotonic()
 
 def run_main():
+    
+    ''' All this is for distributed ray... only using single node rn.'''
     # init ray
     # result = subprocess.run(["hostname", "-i"], capture_output=True, text=True)
     # head_ip = result.stdout.strip()
@@ -115,7 +125,7 @@ def run_main():
 def main():
     """ MAIN """
     # ray.shutdown()
-    ray.init(num_gpus = 4, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
+    ray.init(num_gpus=NUM_CPU_CORES, num_cpus=NUM_THREADS, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
     print_cluster_stats()
     start = time.time()
     
@@ -171,8 +181,8 @@ def rsync_inputs_to_workers():
         print("❌ ERROR: FINAL_RESULTS_DESTINATION does not exist. This is only expected when its your first time processing this file batch.")
         
     SLEEP_TIME = 120
-    # if we already have some video files, don't sleep for 2 min, just go. 
-    if os.path.exists(INPUT_DIR_ON_SCRATCH):
+    # if we already have some video files locally, don't sleep for long because we already have files ready.
+    if os.path.exists(INPUT_DIR_TO_TRANSCRIBE):
         SLEEP_TIME = 30
     
     # video files

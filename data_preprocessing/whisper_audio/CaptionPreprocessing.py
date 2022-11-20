@@ -8,10 +8,10 @@ import sys
 import json
 from dataclasses import asdict
 
-# sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
-# sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
-sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
-sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
+sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
+sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
+# sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
+# sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
 from lhotse import Recording, RecordingSet, align_with_torchaudio
 from lhotse import annotator_lhotse
 
