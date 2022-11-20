@@ -1,18 +1,22 @@
 from logging import raiseExceptions
 import os
+import traceback
 import sys
 import pathlib
 from os import path
 import sys
-sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
-sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
+import json
+from dataclasses import asdict
 
+# sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
+# sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
+sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
+sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
 from lhotse import Recording, RecordingSet, align_with_torchaudio
 from lhotse import annotator_lhotse
-from dataclasses import asdict
+
 from pydub import AudioSegment
 import torch
-import json
 import jsonlines
 
 class CaptionPreprocessing:
@@ -20,6 +24,7 @@ class CaptionPreprocessing:
     def __init__(self, debug = False):
         self.debug = debug
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(self.device)
         self.whisper_model = annotator_lhotse("base", device = self.device)
 
     def process_mp4(self, path):
@@ -65,32 +70,23 @@ class CaptionPreprocessing:
         ]
         """
         def get_cut(path): 
-            success = False
-            # device = "cuda" if torch.cuda.is_available() else "cpu"
-            # print("👾 Device:", device)
-            # dir = '/'.join(path.split("/")[:-1])
-            # print(path)
-
             recording = Recording.from_file(path)
             recordings = RecordingSet.from_recordings([recording])
-            # TODO: This is causing problems again. need more help here.
             # Temporary workaround for interval tree error
+            # 11/19: There is no work around for this problem without diving into whisper code. We are expecting and handling this error
             index = 0
-            while not success:
-                index += 1
+            while True:
                 # More than 10 failed attempts
-                # print("One failed get_cut")
-                if index > 10:
-                    print("Failed too many times, can't annotate.")
-                    raiseExceptions("Can not annotate this cut")
                 try:
                     cuts = self.whisper_model.yield_annotated_recordings(recordings)
                     cuts_aligned = align_with_torchaudio(cuts, device = self.device)
-                    # print("Successfully got cuts_aligned")
                     for cut in cuts_aligned:
                         return asdict(cut)
-                except ValueError or AssertionError as e:
-                    print("❌  ERROR... restarting. ", e)
+                except Exception as e:
+                    if index > 4:
+                        print("could not get cut:", e)
+                        raise
+                index += 1
 
         def to_time_dict():
             time_dict_list = []
@@ -107,7 +103,6 @@ class CaptionPreprocessing:
                         continue
                         
                     if (supervision is None) or (supervision['alignment'] is None) or (supervision['text'] is None) or supervision['text'] == 'Music':
-                        # print(supervision)
                         continue
                     for word in supervision['alignment']['word']:
                         new_dict = {"word": word.symbol, "start": word.start, "end": word.start + word.duration}
@@ -116,24 +111,20 @@ class CaptionPreprocessing:
             except Exception as e:
                 exc_type, exc_obj, exc_tb = sys.exc_info()
                 fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                return
+                raise
             return time_dict_list
 
-        if not self.cut:
-            try:
-                self.cut = get_cut(self.wav_path)
-            except Exception as e:
-                exc_type, exc_obj, exc_tb = sys.exc_info()
-                fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-                print("could not get cut:", exc_type, fname, exc_tb.tb_lineno)
-                return
-        
+        # In case we run get_segments thresholded more than one times
+        if self.cut:
+            print("We already have the cut!")
+        else:
+            self.cut = get_cut(self.wav_path)
+
         time_dict_list = to_time_dict()
         curr_dict_list = []
         index = 0
         while index < (len(time_dict_list)):
             if index + threshold < len(time_dict_list):
-                # print("In while index< leng(timedict)")
                 # If the start and end time of n words is within m seconds, add to the list of dictionaries
                 # a dictionary with n words
                 if time_dict_list[index + threshold - 1]["start"] - time_dict_list[index]["end"] <= time:
@@ -160,11 +151,14 @@ class CaptionPreprocessing:
     def output_json(self, dir):
         if not self.curr_dict_list:
             print("Caption output is empty. Returning...")
+            fp = dir + "_whisper_empty.jsonl"
+            with jsonlines.open(fp, mode='a') as writer:
+                writer.write(self.video_path)
             return
         json_object = json.dumps(self.curr_dict_list)
         # Parse path name, i.e. kastan/thesis/rick.wav -> rick
         # file_name = "/" + str(pathlib.Path(pathlib.PurePath(self.wav_path).parts[-1]).with_suffix(".json"))
-        fp = dir + "_output.jsonl"
+        fp = dir + "_whisper_output.jsonl"
         with jsonlines.open(fp, mode='a') as writer:
             writer.write(json_object)
         return

@@ -54,7 +54,7 @@ def parallel_caption_extraction(file_batch, itr):
             out_path = pathlib.Path(INPUT_DIR_TO_TRANSCRIBE + "_wav" + "/" + out_path)
             if os.path.exists(out_path):
                 print(f'Input file: f{file} -- already processed, skipping')
-                continue
+                raise
             
             # MAIN: run whisper
             process = CaptionPreprocessing.CaptionPreprocessing()
@@ -70,7 +70,7 @@ def parallel_caption_extraction(file_batch, itr):
             if not os.path.exists(error_filepath):
                 pathlib.Path(error_filepath).touch()
             with jsonlines.open(error_filepath, mode='a') as writer:
-                writer.write(failed_file_json_object)
+                writer.write({"video_filepath": failed_file_json_object, "error": e})
         finally:
             # memory savings
             if process:
