@@ -21,7 +21,7 @@ import more_itertools
 import threading
 import jsonlines
 
-dir_name = 'parallel_13'
+dir_name = 'parallel_12'
 FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_output.jsonl'
 INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
 INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
@@ -32,16 +32,20 @@ LOCAL_RESULTS_JSONL = f'/tmp/{dir_name}_output.jsonl'
 # NUM_CPUS = 1
 # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
-# Good vals for Delta GPU nodes. 
-# have (just 3-5) more threads than cores so that if one finishes early, it we will stil saturate the CPU longer...
+# THIS is GREAT balance on delta GPU, 4X GPU with clip running
+NUM_THREADS = 55 # first one always dies for some reason.
+NUM_CPU_CORES = 58
+NUM_GPUS = 3.7
+GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
-# THIS is GREAT balance on delta GPU, with CLIP running. 
-NUM_THREADS = 55*2 # first one always dies for some reason.
-NUM_CPU_CORES = 58*2
-NUM_GPUS = 7.5
-GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+# FOR Delta 8x GPU
+# NUM_THREADS = 55*2 # first one always dies for some reason.
+# NUM_CPU_CORES = 58*2
+# NUM_GPUS = 7.5
+# GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+
+
 assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
-
 
 @ray.remote(num_cpus=0.8, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
 def parallel_caption_extraction(file_batch, itr):
@@ -190,7 +194,8 @@ def rsync_inputs_to_workers():
     # video files
     if os.path.exists(INPUT_DIR_ON_SCRATCH):
         print("Copying video files to /tmp")
-        cp = ['cp', '-r', INPUT_DIR_ON_SCRATCH, '/tmp']
+        # cp = ['cp', '-r', INPUT_DIR_ON_SCRATCH, '/tmp']
+        cp = [f"rsync", "--update", "-v", INPUT_DIR_ON_SCRATCH, INPUT_DIR_TO_TRANSCRIBE]
         process = Popen(cp, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         # don't block for this.
     #   stdout, stderr = process.communicate()
