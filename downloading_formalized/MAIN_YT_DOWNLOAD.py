@@ -114,8 +114,8 @@ def constrain_max_files_per_folder():
     
     if current_file_size >= 25_000:
       parallel_num = str(current_video_file_output_dir).split("_")[-1]
-      new_video_file_output_dir = os.path.join(pathlib.Path(current_video_file_output_dir).parent, f"parallel_{int(parallel_num)+1}")
-      print("Incrementing the parallel download path to: ", parallel_num)
+      new_video_file_output_dir = pathlib.Path( os.path.join(pathlib.Path(current_video_file_output_dir).parent, f"parallel_{int(parallel_num)+1}") )
+      print("Incrementing the parallel download path to: ", int(parallel_num) + 1)
       print(new_video_file_output_dir)
       new_video_file_output_dir.mkdir(parents=True, exist_ok=True)
       write_current_video_dest_path(str(new_video_file_output_dir)) # write the new path to the progress file
@@ -185,7 +185,6 @@ def main():
 
   # Retrieve results.
   all_results = ray.get(futures)
-  constrain_max_files_future
 
   print(len(all_results))
   print(all_results)
