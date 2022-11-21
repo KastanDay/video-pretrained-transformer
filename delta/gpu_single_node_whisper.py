@@ -21,11 +21,15 @@ import more_itertools
 import threading
 import jsonlines
 
-dir_name = 'parallel_12'
-FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_output.jsonl'
+dir_name = 'parallel_13'
+FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
 INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+
 INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
-LOCAL_RESULTS_JSONL = f'/tmp/{dir_name}_output.jsonl'
+LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
 
 # Good vals for Delta CPU nodes. 
 # NUM_THREADS = 3
@@ -33,17 +37,16 @@ LOCAL_RESULTS_JSONL = f'/tmp/{dir_name}_output.jsonl'
 # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
-NUM_THREADS = 55 # first one always dies for some reason.
-NUM_CPU_CORES = 58
-NUM_GPUS = 3.7
-GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+# NUM_THREADS = 55 # first one always dies for some reason.
+# NUM_CPU_CORES = 58
+# NUM_GPUS = 3.7
+# GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR Delta 8x GPU
-# NUM_THREADS = 55*2 # first one always dies for some reason.
-# NUM_CPU_CORES = 58*2
-# NUM_GPUS = 7.5
-# GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
-
+NUM_THREADS = 55*2 # first one always dies for some reason.
+NUM_CPU_CORES = 58*2
+NUM_GPUS = 7.5
+GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
 
@@ -62,9 +65,10 @@ def parallel_caption_extraction(file_batch, itr):
             out_path = pathlib.Path(INPUT_DIR_TO_TRANSCRIBE + "_wav" + "/" + out_path)
             
             # todo: check if output exists in whisper file, if so skip, else try again. 
-            # if os.path.exists(out_path):
-            #     print(f'Input file: f{file} -- already processed, skipping')
-                
+            if os.path.exists(out_path):
+                print(f'Input file: f{file} -- already processed, skipping')
+            
+            # if filename stem in jsonlines. whispers...
             
             # MAIN: run whisper
             process = CaptionPreprocessing.CaptionPreprocessing()
@@ -125,7 +129,7 @@ def run_main():
             whisper_thread = threading.Thread(target=main, name="whisper_thread") # , args=some_args
             whisper_thread.start()
             
-        time.sleep(90)
+        time.sleep(120)
         rsync_results_to_scratch()
 
 def main():
@@ -212,12 +216,22 @@ def rsync_inputs_to_workers():
     return
 
 def rsync_results_to_scratch():
-    """ Called every minute during processing. """
-    # jsons
-    rsync = ['rsync', '--update', LOCAL_RESULTS_JSONL, FINAL_RESULTS_DESTINATION]
-    process = Popen(rsync, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    """ Called every minute or so during processing. """
     # non-blocking. Do this frequently.
+    
+    # FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_output.jsonl'
+    # LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+    # LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+    # LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+    # LOCAL_CLIP_JSONL       = f'/tmp/{dir_name}_clip_output.jsonl'
+    
+    whisper_on_scratch = '/scratch/bbki/kastanday/whisper'
+    Popen(['rsync', '--update', LOCAL_RESULTS_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    Popen(['rsync', '--update', LOCAL_ERRORS_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    Popen(['rsync', '--update', LOCAL_EMPTY_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    Popen(['rsync', '--update', LOCAL_CLIP_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
     # stdout, stderr = process.communicate()
+    return
 
 def print_cluster_stats():
     print("Querying size of Ray cluster...\n")
