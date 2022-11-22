@@ -164,33 +164,33 @@ class CaptionPreprocessing:
             writer.write(json_object)
         return
 
-    def filter_already_completed_video_stems(self, input_video_dir):
+    def filter_completed_whisper_paths(self, video_input_dir):
+        video_input_dir = pathlib.Path(video_input_dir)
         # todo assert we have things, otherwise call them.
-        fp = dir + "_whisper_output.jsonl"
+        fp = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
         
         # todo: glob all files in input_video_dir
         
         # glob files in INPUT_DIR_TO_TRANSCRIBE
+        files = glob.glob(os.path.join(video_input_dir, '*'), recursive = True)
+
         ## EXAMPLE CODE.
-        print(f"Globbing input files... {INPUT_DIR_TO_TRANSCRIBE}")
-        files = glob.glob(os.path.join(INPUT_DIR_TO_TRANSCRIBE, '*'), recursive = True)
-        print(f"Second to glob files: {time.time() - start:.3f}")
         print("Number of files:", len(files))
-        print(files)
-        
-        
-        self.stem_to_whisper
-        self.output_path
-        
-        self.video_file_stems
-        
-        existing_clip_output = # todo: read in stems from parquet at path self.output_path.
-        
-        
-        remaining_stems_for_clip = set(self.video_file_stems) - set(existing_clip_output)
-        
-        
-        print(f"Total to process:\t\t\t {len(self.video_file_stems)}")
-        print(f"Already processed:\t\t\t {len(existing_clip_output)}")
-        print(f"Starting download of remaining:\t\t {len(remaining_stems_for_clip)}")
-        return list(remaining_stems_for_clip)
+        # print(files)
+        # whisper_output = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
+
+        # self.stem_to_whisper
+        # self.output_path
+
+        # self.video_file_stems
+        existing_whisper_output = set()
+        with jsonlines.open(fp, mode = 'r') as reader:
+            for line in reader:
+                if line:
+                    existing_whisper_output.add(line[0]['video_filepath'])
+        # print(existing_whisper_output)
+
+
+        remaining_whisper_input = set(files) - set(existing_whisper_output)
+
+        return list(remaining_whisper_input)
