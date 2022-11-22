@@ -3,7 +3,8 @@ os.environ['TRANSFORMERS_CACHE'] = '/tmp/huggingface_cache' # must be first
 
 import sys
 # sys.path.append(os.path.join(os.getcwd(),"../data_preprocessing/whisper_audio"))
-sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")
+sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing") # DELTA
+# sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing") # HAL
 # import CaptionPreprocessing as CaptionPreprocessing
 from data_preprocessing import DataPreprocessor
 # print(sys.path)
@@ -36,7 +37,7 @@ global LOCAL_CLIP_JSONL
 result = subprocess.run(["hostname"], capture_output=True, text=True)
 hostname = str(result.stdout.strip())
 
-dir_name = 'parallel_12' # 😁 SET ME 😁
+dir_name = 'parallel_14' # 😁 SET ME 😁
 if 'hal' in hostname:
     REMOTE_WHISPER_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
     REMOTE_CLIP_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output.jsonl'
@@ -71,13 +72,13 @@ else:
 # GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR Delta 8x GPU
-# NUM_THREADS = 55*2 # first one always dies for some reason.
-# NUM_CPU_CORES = 58*2
-# NUM_GPUS = 7.5
-# GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+NUM_THREADS = 55*2 # first one always dies for some reason.
+NUM_CPU_CORES = 58*2
+NUM_GPUS = 7.5
+GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR HAL 
-GPU_PER_PROCESS = 1/10 #lots of CPUs per GPU.
+# GPU_PER_PROCESS = 1/10 #lots of CPUs per GPU.
 
 
 # assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
@@ -138,9 +139,9 @@ def main():
     # init ray
     result = subprocess.run(["hostname", "-i"], capture_output=True, text=True)
     head_ip = result.stdout.strip()
-    print(f"Connecting to Ray... at address ray://{head_ip}:10001")
-    # ray.init(address=f'ray://{head_ip}:10001', dashboard_port=8265)   # most reliable way to start Ray
-    ray.init(address=f'auto', ignore_reinit_error=True, dashboard_port=8265)
+    # print(f"Connecting to Ray... at address ray://{head_ip}:10001")
+    ray.init(address=f'{head_ip}:62158', dashboard_port=8265)   # most reliable way to start Ray
+    # ray.init(address=f'auto', ignore_reinit_error=True, dashboard_port=8265)
     # use port-forwarding to see dashboard: `ssh -L 8265:localhost:8265 kastanday@kingfisher.ncsa.illinois.edu`
     print(f"Port forward with command:\n\t\tssh -L 8265:localhost:8265")
     assert ray.is_initialized() == True

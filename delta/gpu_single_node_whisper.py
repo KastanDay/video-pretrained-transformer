@@ -53,6 +53,12 @@ elif any(word in hostname for word in ['aws', 'ec2']): # TODO
     raise NotImplementedError 
 else:
     raise("No valid hostname error. Exiting")
+## Automating this script
+# ssh <head node>
+# export CONTAINER=/scratch/bbki/kastanday/whisper/custom_whisper_latest.sif  && \
+#  singularity run --bind /scratch:/scratch ${CONTAINER} /bin/bash
+# python ~/parallel_pdg/video-pretrained-transformer/delta/gpu_single_node_whisper.py
+
 
 # Good vals for Delta CPU nodes. 
 # NUM_THREADS = 3
@@ -60,16 +66,16 @@ else:
 # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
-# NUM_THREADS = 55 # first one always dies for some reason.
-# NUM_CPU_CORES = 58
-# NUM_GPUS = 3.7
-# GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+NUM_THREADS = 55 # first one always dies for some reason.
+NUM_CPU_CORES = 58
+NUM_GPUS = 3.7
+GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR Delta 8x GPU
-NUM_THREADS = 55*2 # first one always dies for some reason.
-NUM_CPU_CORES = 58*2
-NUM_GPUS = 7.5
-GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+# NUM_THREADS = 55*2 # first one always dies for some reason.
+# NUM_CPU_CORES = 58*2
+# NUM_GPUS = 7.5
+# GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
 
@@ -167,6 +173,7 @@ def main():
     files = glob.glob(os.path.join(INPUT_DIR_TO_TRANSCRIBE, '*'), recursive = True)
     print(f"Second to glob files: {time.time() - start:.3f}")
     print("Number of files:", len(files))
+    print(files)
     
     # todo: filter out bad files (.vtt and .wav, and .json) Anything other than webm and mp4?
     
@@ -222,7 +229,7 @@ def rsync_inputs_to_workers():
     if os.path.exists(INPUT_DIR_ON_SCRATCH):
         print("Copying video files to /tmp")
         # cp = ['cp', '-r', INPUT_DIR_ON_SCRATCH, '/tmp']
-        cp = [f"rsync", "--update", "-v", INPUT_DIR_ON_SCRATCH, INPUT_DIR_TO_TRANSCRIBE]
+        cp = [f"rsync", "--update", "-r", INPUT_DIR_ON_SCRATCH, INPUT_DIR_TO_TRANSCRIBE]
         process = Popen(cp, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         # don't block for this.
     #   stdout, stderr = process.communicate()

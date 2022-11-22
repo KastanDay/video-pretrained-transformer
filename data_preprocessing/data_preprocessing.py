@@ -15,7 +15,14 @@ import jsonlines
 import json
 import json_numpy
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
+
+
+# Install depends (STRICT dependencies, mostly due to Ray.):
+# conda create -n v3_clip_preprocessing_yt1b python=3.8.13 -y
+# conda install pytorch torchvision torchaudio cudatoolkit=11.7 -c pytorch -c conda-forge -y
+# pip install "ray[default]==1.13.0" more_itertools jsonlines json_numpy pyarrow pandas parquet ftfy regex tqdm git+https://github.com/openai/CLIP.git
+# (optional) pip install pretty_errors
 
 def parse_cmd_line_args():
     """ Usage: 
@@ -72,7 +79,7 @@ class DataPreprocessor:
             self.stem_to_filename[str(Path(video_dir_file).stem)] = video_dir_file
 
         self.audio_file_stems = []
-        self.stem_to_whisper = {}
+        self.stem_to_whisper = {}  # filename.stem --> whisper_json_object
         with jsonlines.open(self.audio_jsonl) as reader:
             try:
                 for _, obj in enumerate(reader):
