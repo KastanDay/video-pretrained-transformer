@@ -5,13 +5,14 @@ import sys
 import pathlib
 from os import path
 import sys
+import glob
 import json
 from dataclasses import asdict
 
-sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
-sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
-# sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
-# sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
+# sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
+# sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
+sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
+sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
 from lhotse import Recording, RecordingSet, align_with_torchaudio
 from lhotse import annotator_lhotse
 
@@ -148,17 +149,48 @@ class CaptionPreprocessing:
         self.curr_dict_list = curr_dict_list
         return curr_dict_list
 
-    def output_json(self, dir):
+    def output_json(self, input_video_dir):
         if not self.curr_dict_list:
             print("Caption output is empty. Returning...")
-            fp = dir + "_whisper_empty.jsonl"
+            fp = input_video_dir + "_whisper_empty.jsonl"
             with jsonlines.open(fp, mode='a') as writer:
                 writer.write(self.video_path)
             return
         json_object = json.dumps(self.curr_dict_list)
         # Parse path name, i.e. kastan/thesis/rick.wav -> rick
         # file_name = "/" + str(pathlib.Path(pathlib.PurePath(self.wav_path).parts[-1]).with_suffix(".json"))
-        fp = dir + "_whisper_output.jsonl"
+        fp = input_video_dir + "_whisper_output.jsonl"
         with jsonlines.open(fp, mode='a') as writer:
             writer.write(json_object)
         return
+
+    def filter_already_completed_video_stems(self, input_video_dir):
+        # todo assert we have things, otherwise call them.
+        fp = dir + "_whisper_output.jsonl"
+        
+        # todo: glob all files in input_video_dir
+        
+        # glob files in INPUT_DIR_TO_TRANSCRIBE
+        ## EXAMPLE CODE.
+        print(f"Globbing input files... {INPUT_DIR_TO_TRANSCRIBE}")
+        files = glob.glob(os.path.join(INPUT_DIR_TO_TRANSCRIBE, '*'), recursive = True)
+        print(f"Second to glob files: {time.time() - start:.3f}")
+        print("Number of files:", len(files))
+        print(files)
+        
+        
+        self.stem_to_whisper
+        self.output_path
+        
+        self.video_file_stems
+        
+        existing_clip_output = # todo: read in stems from parquet at path self.output_path.
+        
+        
+        remaining_stems_for_clip = set(self.video_file_stems) - set(existing_clip_output)
+        
+        
+        print(f"Total to process:\t\t\t {len(self.video_file_stems)}")
+        print(f"Already processed:\t\t\t {len(existing_clip_output)}")
+        print(f"Starting download of remaining:\t\t {len(remaining_stems_for_clip)}")
+        return list(remaining_stems_for_clip)
