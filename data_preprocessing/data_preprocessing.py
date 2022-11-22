@@ -15,9 +15,11 @@ import jsonlines
 import json
 import json_numpy
 
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 def parse_cmd_line_args():
     """ Usage: 
-    $ python data_preprocessing.py  --video_path /tmp/parallel_12 --audio_jsonl /tmp/parallel_12_whisper_output.jsonl
+    $ python data_preprocessing.py  --video_path /tmp/parallel_12
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--video_path', type=str, help="path of video directory (not individual files). Ex: `--video_path /tmp/parallel_12`")
@@ -33,6 +35,13 @@ def parse_cmd_line_args():
     video_input_dir = pathlib.Path(args.video_path)
     args.output_path = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_clip_output.jsonl'))
     args.audio_jsonl = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
+
+    # validate input
+    print("Using video path:", args.video_path)
+    assert os.path.exists(args.video_path)
+    assert os.path.exists(args.output_path)
+    assert os.path.exists(args.audio_jsonl)
+
     return args
 
 class DataPreprocessor: 
@@ -45,7 +54,6 @@ class DataPreprocessor:
         self.debug = debug
 
         # Load the model
-        # print("❌❌MAJOR WARNING❌❌: setting cuda to 8")
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         # self.device = "cpu"
         print(f"Using {self.device}...")
@@ -66,16 +74,28 @@ class DataPreprocessor:
         self.audio_file_stems = []
         self.stem_to_whisper = {}
         with jsonlines.open(self.audio_jsonl) as reader:
-            for _, obj in enumerate(reader):
-                json_objs = json.loads(obj)
-                for json_obj in json_objs:
-                    self.audio_file_stems.append(json_obj['video_filename_stem'])
+            try:
+                for _, obj in enumerate(reader):
+                    json_objs = json.loads(obj)
+                    for json_obj in json_objs:
+                        self.audio_file_stems.append(json_obj['video_filename_stem'])
 
-                    if json_obj['video_filename_stem'] not in self.stem_to_whisper:
-                        self.stem_to_whisper[json_obj['video_filename_stem']] = []
-                    
-                    self.stem_to_whisper[json_obj['video_filename_stem']].append(json_obj)
+                        if json_obj['video_filename_stem'] not in self.stem_to_whisper:
+                            self.stem_to_whisper[json_obj['video_filename_stem']] = []
+                        
+                        self.stem_to_whisper[json_obj['video_filename_stem']].append(json_obj)
+            except Exception as e:
+                print(f"Error: couldn't read {self.audio_jsonl}. Got error: {e}")
+        if self.debug:
+            print(f"Done collecting {self.audio_jsonl}")
 
+
+    def get_audio_file_stems(self):
+        return self.audio_file_stems
+    
+    def get_video_dir_files(self):
+        return self.video_dir_files
+    
     def get_frames_for_segments(self, video_name, segments):
         if len(segments) == 0:
             return None
