@@ -21,15 +21,38 @@ import more_itertools
 import threading
 import jsonlines
 
-dir_name = 'parallel_13'
-FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
-INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+global FINAL_RESULTS_DESTINATION
+global INPUT_DIR_ON_SCRATCH
+global INPUT_DIR_TO_TRANSCRIBE
+global LOCAL_RESULTS_JSONL
+global LOCAL_ERRORS_JSONL
+global LOCAL_EMPTY_JSONL
+global LOCAL_CLIP_JSONL
+# get hostname
+result = subprocess.run(["hostname"], capture_output=True, text=True)
+hostname = str(result.stdout.strip())
 
-INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
-LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
+dir_name = 'parallel_13' # 😁 SET ME 😁
+if 'hal' in hostname:
+    FINAL_RESULTS_DESTINATION = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
+    INPUT_DIR_ON_SCRATCH = f'/home/kastanday/thesis/whisper/{dir_name}'
+    INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
+    LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+    LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+    LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+    LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
+elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
+    FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
+    INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+    INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
+    LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+    LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+    LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+    LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
+elif any(word in hostname for word in ['aws', 'ec2']): # TODO
+    raise NotImplementedError 
+else:
+    raise("No valid hostname error. Exiting")
 
 # Good vals for Delta CPU nodes. 
 # NUM_THREADS = 3
