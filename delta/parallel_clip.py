@@ -154,8 +154,8 @@ def main():
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
     my_clip_preprocesser = DataPreprocessor(video_data_path=REMOTE_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=REMOTE_CLIP_JSONL_PATH, debug=True)
-    audio_file_stems = my_clip_preprocesser.get_audio_file_stems()
-    video_dir_files = my_clip_preprocesser.get_video_dir_files()
+    audio_file_stems, stem_to_whisper = my_clip_preprocesser.get_all_audio_file_stems()
+    video_dir_files, stem_to_filename = my_clip_preprocesser.get_video_dir_files()
 
     files = []
     samples_not_found = 0

@@ -22,6 +22,8 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
 # conda create -n v3_clip_preprocessing_yt1b python=3.8.13 -y
 # conda install pytorch torchvision torchaudio cudatoolkit=11.7 -c pytorch -c conda-forge -y
 # pip install "ray[default]==1.13.0" more_itertools jsonlines json_numpy pyarrow pandas parquet ftfy regex tqdm git+https://github.com/openai/CLIP.git
+# conda install -c conda-forge -y git-lfs
+# cd into the git repo and run `git lfs install` and `git lfs pull`
 # (optional) pip install pretty_errors
 
 def parse_cmd_line_args():
@@ -66,26 +68,23 @@ class DataPreprocessor:
         print(f"Using {self.device}...")
 
         self.clip, self.clip_preprocess = clip.load('ViT-B/32', self.device)
-
         if self.debug:
             print(f"Done setting up CLIP...")
 
-        self.video_dir_files = set()
-        self.stem_to_filename = {}
+    def get_all_video_file_stems(self):
+        ''' 
+        Video_file_stems: all input files (not filtered in any way) 
+        stem_to_whisper: stem returns list of whisper dicts. 
         
-        for video_dir_file in glob.glob(os.path.join(self.video_data_path, '*'), recursive = True):
-            # print(Path(video_dir_file).stem)
-            self.video_dir_files.add(str(Path(video_dir_file).stem))
-            self.stem_to_filename[str(Path(video_dir_file).stem)] = video_dir_file
-
-        self.audio_file_stems = []
+        ''' 
+        self.video_file_stems = [] # all stems
         self.stem_to_whisper = {}  # filename.stem --> whisper_json_object
         with jsonlines.open(self.audio_jsonl) as reader:
             try:
                 for _, obj in enumerate(reader):
                     json_objs = json.loads(obj)
                     for json_obj in json_objs:
-                        self.audio_file_stems.append(json_obj['video_filename_stem'])
+                        self.video_file_stems.append(json_obj['video_filename_stem'])
 
                         if json_obj['video_filename_stem'] not in self.stem_to_whisper:
                             self.stem_to_whisper[json_obj['video_filename_stem']] = []
@@ -95,23 +94,51 @@ class DataPreprocessor:
                 print(f"Error: couldn't read {self.audio_jsonl}. Got error: {e}")
         if self.debug:
             print(f"Done collecting {self.audio_jsonl}")
-
-
-    def get_audio_file_stems(self):
-        return self.audio_file_stems
+        return self.video_file_stems, self.stem_to_whisper
     
     def get_video_dir_files(self):
-        return self.video_dir_files
+        '''
+        video_dir_files: set( of all files in video_dir )
+        stem_to_filename: {} stem --> filename
+        '''
+        self.video_dir_files = set()
+        self.stem_to_filename = {}
+        
+        for video_dir_file in glob.glob(os.path.join(self.video_data_path, '*'), recursive = True):
+            # print(Path(video_dir_file).stem)
+            self.video_dir_files.add(str(Path(video_dir_file).stem))
+            self.stem_to_filename[str(Path(video_dir_file).stem)] = video_dir_file
+        return self.video_dir_files, self.stem_to_filename
     
-    def get_frames_for_segments(self, video_name, segments):
+
+    def filter_already_completed_video_stems(self,):
+        # todo assert we have things, otherwise call them.
+        self.stem_to_whisper
+        self.output_path
+        
+        self.video_file_stems
+        
+        existing_clip_output = # todo: read in stems from parquet at path self.output_path.
+        
+        
+        remaining = set(self.video_file_stems) - set(existing_clip_output)
+        
+        
+        print(f"Total to download:\t\t\t {len(list_of_ids_to_download)}")
+        print(f"Already downloaded:\t\t\t {len(already_downloaded)}")
+        print(f"Starting download of remaining:\t\t {len(remaining_to_download)}")
+        return list(remaining_to_download)
+        
+    
+    def get_frames_for_segments(self, video_filepath: str, segments):
         if len(segments) == 0:
             return None
 
-        # assert os.path.exists(self.video_data_path+video_name+extension)
-        assert os.path.exists(self.stem_to_filename[str(os.path.join(video_name))])
+        # assert os.path.exists(self.stem_to_filename[str(os.path.join(video_name))])
+        assert os.path.exists(video_filepath)
 
-        # cap = cv2.VideoCapture(self.video_data_path+video_name+extension)
-        cap = cv2.VideoCapture(self.stem_to_filename[str(os.path.join(video_name))])
+        # cap = cv2.VideoCapture(self.stem_to_filename[str(os.path.join(video_name))])
+        cap = cv2.VideoCapture(video_filepath)
         fps = cap.get(cv2.CAP_PROP_FPS)
 
         amount_of_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
@@ -153,8 +180,8 @@ class DataPreprocessor:
 
         return segment_frames
 
-    def get_multimodal_features(self, video_name, segments, num_frames=3):
-        segment_frames = self.get_frames_for_segments(video_name, segments)
+    def get_multimodal_features(self, video_filepath, segments, num_frames=3):
+        segment_frames = self.get_frames_for_segments(video_filepath, segments)
         serialized_frames = []
 
         # scene_graph_features = []
@@ -195,39 +222,64 @@ class DataPreprocessor:
 
         return clip_features, caption_features, serialized_frames
 
-    def construct_training_samples(self, video_name):
+    def construct_training_samples(self, video_filepath, list_of_whisper_output_dict):
+        ''' Basically the main function of this CLIP class. '''
         # initialize empty sample
+        # whisper_segments = self.stem_to_whisper[video_name] 
         whisper_segments = None
-        # with open(self.audio_data_path+video_name+".json", "r") as whisper_f:
-        #     whisper_segments = json.load(whisper_f)
-
-        whisper_segments = self.stem_to_whisper[video_name]
+        whisper_segments = list_of_whisper_output_dict
 
         if self.debug:
             print("Loaded Whisper Json file")
 
-        image_features, caption_features, segment_frames = self.get_multimodal_features(video_name, whisper_segments, self.num_frames)
+        image_features, caption_features, segment_frames = self.get_multimodal_features(video_filepath, whisper_segments, self.num_frames)
 
         # assert len(image_features) == len(scene_graph_features) == len(caption_features) == len(whisper_segments)
 
         if self.debug:
             print("Obtained multimodal features")
+            
+
         
         # keep this ont the outside of the for loop for faster writing.
         with jsonlines.open(self.output_path, mode='a') as writer:
             for i, (image_feature, caption_feature, segment_frames) in enumerate(zip(image_features, caption_features, segment_frames)):
                 # print(f"Processing segment {i+1} of {len(image_features)}")
-                sample_dict = {
-                    "filename": video_name,
-                    "segment_length": whisper_segments[i]['end'] - whisper_segments[i]['start'],
-                    "captions": whisper_segments[i]['caption'],
-                    "segment_start_time": whisper_segments[i]['start'],
-                    "segment_end_time": whisper_segments[i]['end'],
-                    "frame_embeddings": image_feature,
-                    "text_caption_embeddings": caption_feature,
-                    # "scene_graph_embeddings": scene_graph_feature
-                    "segment_frames": segment_frames
-                }
+                writer.write_all([
+                    ...,
+                    ...,
+                    ...,
+                ])
+                # todo: 
+                table = pa.table(
+                    {
+                        "video_stem": str(Path(video_filepath).stem),
+                        "segment_id": str(Path(video_filepath).stem) + f"_{i}",
+                        "segment_index": i,
+                        "total_segments": len(whisper_segments),
+                        "segment_total_time": whisper_segments[i]['end'] - whisper_segments[i]['start'],
+                        "captions": whisper_segments[i]['caption'],
+                        "segment_start_time": whisper_segments[i]['start'],
+                        "segment_end_time": whisper_segments[i]['end'],
+                        "frame_embeddings": image_feature,
+                        "text_caption_embeddings": caption_feature,
+                        # "scene_graph_embeddings": scene_graph_feature
+                        "segment_frames": segment_frames
+                    })
+                # sample_dict = {
+                #     "video_stem": str(Path(video_filepath).stem),
+                #     "segment_id": str(Path(video_filepath).stem) + f"_{i}",
+                #     "segment_index": i,
+                #     "total_segments": len(whisper_segments),
+                #     "segment_total_time": whisper_segments[i]['end'] - whisper_segments[i]['start'],
+                #     "captions": whisper_segments[i]['caption'],
+                #     "segment_start_time": whisper_segments[i]['start'],
+                #     "segment_end_time": whisper_segments[i]['end'],
+                #     "frame_embeddings": image_feature,
+                #     "text_caption_embeddings": caption_feature,
+                #     # "scene_graph_embeddings": scene_graph_feature
+                #     "segment_frames": segment_frames
+                # }
                 writer.write(sample_dict) # WRITE output dataset line.
 
         if self.debug:
@@ -237,20 +289,26 @@ class DataPreprocessor:
         samples_not_found = 0
         total_samples = 0
 
-        for i in tqdm(range(len(self.audio_file_stems))):
-            video_name = self.audio_file_stems[i]
+        # # TODO: dataformat
+        for i in tqdm(range(len(self.video_file_stems))):
+            video_name = self.video_file_stems[i]
             if str(video_name) not in self.video_dir_files:
                 samples_not_found += 1
             else:
                 if self.debug:
                     print("Constructing training samples...")
-                self.construct_training_samples(video_name)
+                self.construct_training_samples(video_name, video_filepath)
             total_samples += 1
 
         print(f"[❌ ERROR ❌] {samples_not_found} of {total_samples} are invalid")
+    
+    def start_clip(self, video_filepath: str, list_of_whisper_output_dict):
+        self.construct_training_samples(video_filepath, list_of_whisper_output_dict)
+    
 
 if __name__ == "__main__":
     args = parse_cmd_line_args()
     data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, output_path=args.output_path, debug=False)
-    data_preprocessor.process_using_audio_dir()
+    # data_preprocessor.process_using_audio_dir()
+    
     
