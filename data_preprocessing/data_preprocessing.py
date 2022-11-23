@@ -202,6 +202,8 @@ class DataPreprocessor:
         if self.debug:
             print("Got segment frames")
 
+        image_input = []
+        text_inputs = []
 
         # extract clip features for each segment  and extract text features for captions
         for i, frames_list in enumerate(segment_frames):
@@ -221,17 +223,38 @@ class DataPreprocessor:
             assert len(frames_list) <= 3
             resized_frames = [Image.fromarray(cv2.resize(np.array(frames_list[frame_idx]), dsize=(224, 224), interpolation=cv2.INTER_CUBIC)) for frame_idx in range(len(frames_list))]
 
-            image_input = torch.cat([self.clip_preprocess(frame).unsqueeze(0) for frame in resized_frames]).to(self.device)
-            text_inputs = torch.cat([clip.tokenize(segments[i]['caption'])]).to(self.device)
-        
-            with torch.no_grad():
-                image_features = self.clip.encode_image(image_input)
-                text_features = self.clip.encode_text(text_inputs)
+            # image_input = torch.cat([self.clip_preprocess(frame).unsqueeze(0) for frame in resized_frames]).to(self.device)
+            # text_inputs = torch.cat([clip.tokenize(segments[i]['caption'])]).to(self.device)
 
-                clip_features.append(image_features.cpu().numpy().tolist())
-                caption_features.append(text_features.cpu().numpy().tolist())
+            image_input = image_input + [self.clip_preprocess(frame).unsqueeze(0) for frame in resized_frames]
+            text_inputs.append(segments[i]['caption'])
+        
+        image_input = torch.cat(image_input).to(self.device)
+        text_inputs = torch.cat(text_inputs).to(self.device)
+
+        with torch.no_grad():
+            image_features = self.clip.encode_image(image_input)
+            text_features = self.clip.encode_text(text_inputs)
+
+            image_features = image_features.cpu().numpy().tolist()
+            text_features = text_features.cpu().numpy().tolist()
+
+
+
+        for i in range(len(segment_frames)):
+            num_frames_in_segment = len(segment_frames[i])
+
+            for j in range(num_frames_in_segment):
+                clip_features.append(image_features[i][j])
+
+            caption_features.append(text_features[i])
+
+
+        clip_features.append(image_features.cpu().numpy().tolist())
+        caption_features.append(text_features.cpu().numpy().tolist())
 
         return clip_features, caption_features, serialized_frames
+        
 
     def run_clip_one_video(self, video_filepath, list_of_whisper_output_dict):
         ''' Basically the main function of this CLIP class. '''
