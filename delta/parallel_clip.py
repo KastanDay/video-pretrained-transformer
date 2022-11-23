@@ -80,28 +80,23 @@ GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value 
 # FOR HAL 
 # GPU_PER_PROCESS = 1/10 #lots of CPUs per GPU.
 
-
-# assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
-
 @ray.remote(num_cpus=0.8, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
-def parallel_caption_extraction(file_batch, itr):
+def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
     # todo: get around this this import, but idk why it won't recognize it unless it's in here...
     # sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     # from data_preprocessing import DataPreprocessor
     start = time.monotonic()
     sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
-    data_preprocessor = DataPreprocessor(video_data_path=REMOTE_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=REMOTE_CLIP_JSONL_PATH, debug=False)
-    for index, file in enumerate(file_batch):
+    my_clip_preprocesser = DataPreprocessor(video_data_path=REMOTE_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=REMOTE_CLIP_JSONL_PATH, debug=False)
+    for index, file_stem in enumerate(file_batch):
         try:
-            data_preprocessor.construct_training_samples(file)
-            
-            # todo: better resuming. if filename stem in jsonlines.... 
-            print("✅ Success: ", file)
+            my_clip_preprocesser.run_clip_one_video(stem_to_filename[file_stem], stem_to_whisper[file_stem])# video filepath, whisper_dict_list
+            print("✅ Success: ", file_stem)
         except Exception as e:
             # write failed files to jsonlines
             print(f"Error during whisper: {e}")
-            failed_file_json_object = json.dumps(str(file))
+            failed_file_json_object = json.dumps(str(file_stem))
             error_filepath = INPUT_DIR_TO_TRANSCRIBE + "_whisper_errors.jsonl"
             if not os.path.exists(error_filepath):
                 pathlib.Path(error_filepath).touch()
@@ -111,28 +106,6 @@ def parallel_caption_extraction(file_batch, itr):
         # one file done        
         print(f"⏰ Time to Whisper the file: {(time.monotonic() - start)/60:.2f} minutes")
         start = time.monotonic()
-
-# def run_main():
-#     # rsync_inputs_to_workers() # blocking rsync call.
-    
-#     # first call, then watch memory usage & restart as necessary
-#     whisper_thread = threading.Thread(target=main, name="whisper_thread") # , args=some_args
-#     whisper_thread.start()
-    
-#     while True: 
-#         print('RAM Used (GB):', psutil.virtual_memory()[3]/1000000000)
-#         print(f'RAM memory % used: {psutil.virtual_memory()[2]}%')
-#         if psutil.virtual_memory()[2] > 90: # change to 90 or 95
-#             print("❌  ⚠️⚠️⚠️Memory usage is high, restarting ray ⚠️⚠️⚠️  ❌")
-#             ray.shutdown()
-#             # time.sleep(2)
-#             assert ray.is_initialized() == False
-            
-#             whisper_thread = threading.Thread(target=main, name="whisper_thread") # , args=some_args
-#             whisper_thread.start()
-            
-#         time.sleep(120)
-#         rsync_results_to_scratch()
 
 def main():
     """ MAIN """
@@ -154,30 +127,15 @@ def main():
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
     my_clip_preprocesser = DataPreprocessor(video_data_path=REMOTE_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=REMOTE_CLIP_JSONL_PATH, debug=True)
-    audio_file_stems, stem_to_whisper = my_clip_preprocesser.get_all_audio_file_stems()
     video_dir_files, stem_to_filename = my_clip_preprocesser.get_video_dir_files()
-
-    files = []
-    samples_not_found = 0
-    total_samples = 0
-    print("Loading video filenames")
-    for video_name in audio_file_stems:
-        if str(video_name) not in video_dir_files:
-            samples_not_found += 1
-        else:
-            files.append(video_name)
-            # self.construct_training_samples(video_name)
-        total_samples += 1
-    
-    if samples_not_found > 0:
-      print(f"[❌ WARNING ❌] {samples_not_found} of {total_samples} are invalid")
+    video_stems, stem_to_whisper = my_clip_preprocesser.filter_already_completed_video_stems()
 
     # shuffle the list files
     # random.seed(42) # NO SEED, different shuffle each time.
-    random.shuffle(files)
+    random.shuffle(video_stems)
     
     # batches = list(more_itertools.divide( int(round(ray.cluster_resources()['CPU'])) , files))
-    batches = list(more_itertools.divide( 10 , files))
+    batches = list(more_itertools.divide( 10 , video_stems))
     
     # print batch stats
     batchsize_iterator = 0
@@ -192,7 +150,7 @@ def main():
 
     # all_results = ray.get([parallel_caption_extraction.remote(batch, itr) for itr, batch in enumerate(batches)])
     print("Starting parallel batches")
-    all_result_futures = [parallel_caption_extraction.remote(batch, itr) for itr, batch in enumerate(batches)]
+    all_result_futures = [parallel_caption_extraction.remote(batch, stem_to_filename, stem_to_whisper) for itr, batch in enumerate(batches)]
     
     all_done = ray.get(all_result_futures)
     
