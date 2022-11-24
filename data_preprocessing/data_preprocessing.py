@@ -174,9 +174,6 @@ class DataPreprocessor:
         segment_frames = []
 
         for i, segment in enumerate(segments):
-            if self.debug:
-                print("Reading frames from segment: ", i)
-
             start_time = segment['start']
             end_time = segment['end']
             
@@ -225,7 +222,7 @@ class DataPreprocessor:
 
         # extract clip features for each segment  and extract text features for captions
         for i, frames_list in enumerate(segment_frames):
-            print(f"Segment {i} has {len(frames_list)} frames")
+            # print(f"Segment {i} has {len(frames_list)} frames")
             if len(frames_list) == 0:
                 continue
 
@@ -242,15 +239,14 @@ class DataPreprocessor:
         text_inputs = torch.cat(text_inputs).to(self.device)
 
         print("RIGHT before running clip 📸")
+        start_time = time.monotonic()
         with torch.no_grad():
             image_features = self.clip.encode_image(image_input)
             text_features = self.clip.encode_text(text_inputs)
 
             image_features = image_features.cpu().numpy().reshape(len(segment_frames), self.num_frames, -1) # -1 == 3.
             text_features = text_features.cpu().numpy()
-            print("AFTER reshape")
-            print("img_features ", image_features.shape) # (135, 768)
-            print("text_features", text_features.shape)  # (45, 768)
+            print(f"Time to run clip: {(time.monotonic() - start_time):2f} on {len(segment_frames)* self.num_frames} images")
         
         if self.debug:
             print("Clip features:")
