@@ -14,15 +14,11 @@ import time
 import json
 import ray
 import random
-import glob
 import subprocess
 from subprocess import PIPE, Popen
-import psutil
-import shlex
 import more_itertools
-import threading
 import jsonlines
-import tqdm
+import traceback
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
@@ -40,21 +36,23 @@ hostname = str(result.stdout.strip())
 dir_name = 'parallel_14' # 😁 SET ME 😁
 if 'hal' in hostname:
     REMOTE_WHISPER_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
-    REMOTE_CLIP_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output.jsonl'
+    REMOTE_CLIP_PARQUET     = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output.jsonl'
     REMOTE_INPUT_VIDEO_PATH = f'/home/kastanday/thesis/whisper/{dir_name}'
-    LOCAL_VIDEO_PATH = f'/tmp/{dir_name}'
+    LOCAL_VIDEO_PATH        = f'/tmp/{dir_name}'
     LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
     LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
     LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-    LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
+    LOCAL_CLIP_PARQUET      = f'/tmp/{dir_name}_clip_output.parquet'
 elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
-    FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
-    INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
-    INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
+    print("RUNNING ON DELTA")
+    REMOTE_WHISPER_JSONL_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
+    REMOTE_INPUT_VIDEO_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+    REMOTE_CLIP_PARQUET      = f'/scratch/bbki/kastanday/whisper/{dir_name}_clip_output.parquet'
+    LOCAL_INPUT_VIDEO_PATH = f'/tmp/{dir_name}'
     LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
     LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
     LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-    LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
+    LOCAL_CLIP_PARQUET      = f'/tmp/{dir_name}_clip_output.parquet'
 elif any(word in hostname for word in ['aws', 'ec2']): # TODO
     raise NotImplementedError 
 else:
@@ -66,38 +64,41 @@ else:
 # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
-# NUM_THREADS = 55 # first one always dies for some reason.
-# NUM_CPU_CORES = 58
-# NUM_GPUS = 3.7
-# GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+NUM_THREADS = 26 # first one always dies for some reason.
+NUM_CPU_CORES = 64
+NUM_GPUS = 4
+GPU_PER_PROCESS = 1/4 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR Delta 8x GPU
-NUM_THREADS = 55*2 # first one always dies for some reason.
-NUM_CPU_CORES = 58*2
-NUM_GPUS = 7.5
-GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+# NUM_THREADS = 55*2 # first one always dies for some reason.
+# NUM_CPU_CORES = 58*2
+# NUM_GPUS = 7.5
+# GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+
+NUM_PHYSICAL_CORES_TO_USE = 64
 
 # FOR HAL 
 # GPU_PER_PROCESS = 1/10 #lots of CPUs per GPU.
 
-@ray.remote(num_cpus=0.8, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
+@ray.remote(num_cpus=5, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
 def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
     # todo: get around this this import, but idk why it won't recognize it unless it's in here...
     # sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     # from data_preprocessing import DataPreprocessor
     start = time.monotonic()
-    sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")
+    # sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")
+    sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
-    my_clip_preprocesser = DataPreprocessor(video_data_path=REMOTE_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=REMOTE_CLIP_JSONL_PATH, debug=False)
+    my_clip_preprocesser = DataPreprocessor(video_data_path=LOCAL_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=LOCAL_CLIP_PARQUET, debug=True)
     for index, file_stem in enumerate(file_batch):
         try:
             my_clip_preprocesser.run_clip_one_video(stem_to_filename[file_stem], stem_to_whisper[file_stem])# video filepath, whisper_dict_list
             print("✅ Success: ", file_stem)
         except Exception as e:
             # write failed files to jsonlines
-            print(f"Error during whisper: {e}")
+            print(f"Error during CLIP: {e}\n{traceback.print_exc()}")
             failed_file_json_object = json.dumps(str(file_stem))
-            error_filepath = INPUT_DIR_TO_TRANSCRIBE + "_whisper_errors.jsonl"
+            error_filepath = LOCAL_INPUT_VIDEO_PATH + "_whisper_errors.jsonl"
             if not os.path.exists(error_filepath):
                 pathlib.Path(error_filepath).touch()
             with jsonlines.open(error_filepath, mode='a') as writer:
@@ -112,9 +113,10 @@ def main():
     # init ray
     result = subprocess.run(["hostname", "-i"], capture_output=True, text=True)
     head_ip = result.stdout.strip()
-    # print(f"Connecting to Ray... at address ray://{head_ip}:10001")
-    ray.init(address=f'{head_ip}:62158', dashboard_port=8265)   # most reliable way to start Ray
-    # ray.init(address=f'auto', ignore_reinit_error=True, dashboard_port=8265)
+    print(f"Connecting to Ray... at address ray://{head_ip}:10001")
+    # ray.init(address=f'{head_ip}:62158', dashboard_port=8265)   # most reliable way to start Ray
+    # ray.init(address='141.142.145.119:60952', ignore_reinit_error=True,)# dashboard_port=8265)
+    ray.init(address='auto', ignore_reinit_error=True,)# dashboard_port=8265)
     # use port-forwarding to see dashboard: `ssh -L 8265:localhost:8265 kastanday@kingfisher.ncsa.illinois.edu`
     print(f"Port forward with command:\n\t\tssh -L 8265:localhost:8265")
     assert ray.is_initialized() == True
@@ -124,26 +126,33 @@ def main():
     print_cluster_stats()
     start = time.time()
     
+    # REMOVE LOCK before starting run (lock could be there if we crash)
+    lock_file = pathlib.Path(LOCAL_CLIP_PARQUET).parent / (pathlib.Path(LOCAL_CLIP_PARQUET).name + '.lock') # same exact filename, with a second .lock extension.
+    if os.path.exists(lock_file):
+        os.remove(lock_file)
+        print("Removed lock file.")
+    
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
-    my_clip_preprocesser = DataPreprocessor(video_data_path=REMOTE_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=REMOTE_CLIP_JSONL_PATH, debug=True)
+    my_clip_preprocesser = DataPreprocessor(video_data_path=LOCAL_INPUT_VIDEO_PATH, audio_jsonl=LOCAL_RESULTS_JSONL, output_path=LOCAL_CLIP_PARQUET, debug=False)
     video_dir_files, stem_to_filename = my_clip_preprocesser.get_video_dir_files()
     video_stems, stem_to_whisper = my_clip_preprocesser.filter_already_completed_video_stems()
+    del my_clip_preprocesser # save memory
 
     # shuffle the list files
     # random.seed(42) # NO SEED, different shuffle each time.
     random.shuffle(video_stems)
     
     # batches = list(more_itertools.divide( int(round(ray.cluster_resources()['CPU'])) , files))
-    batches = list(more_itertools.divide( 10 , video_stems))
+    batches = list(more_itertools.divide( NUM_THREADS , video_stems))
     
     # print batch stats
-    batchsize_iterator = 0
-    for i, val in enumerate(batches[0]):
-        if i < 5:
-            print(val)
-        batchsize_iterator = i
-    print("Batch size: ", batchsize_iterator)
+    # batchsize_iterator = 0
+    # for i, val in enumerate(batches[0]):
+    #     if i < 5:
+    #         print(val)
+    #     batchsize_iterator = i
+    # print("Batch size: ", batchsize_iterator)
     print("Num batches: ", len(batches))
     # print(len(batches), " should equal num threads: ", ray.cluster_resources()['CPU'])
     # assert len(batches) == (ray.cluster_resources()['CPU'])
