@@ -32,7 +32,7 @@ global LOCAL_CLIP_JSONL
 result = subprocess.run(["hostname"], capture_output=True, text=True)
 hostname = str(result.stdout.strip())
 
-dir_name = 'parallel_13' # 😁 SET ME 😁
+dir_name = 'parallel_15' # 😁 SET ME 😁
 if 'hal' in hostname:
     FINAL_RESULTS_DESTINATION = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
     INPUT_DIR_ON_SCRATCH = f'/home/kastanday/thesis/whisper/{dir_name}'
@@ -66,10 +66,10 @@ else:
 # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
-NUM_THREADS = 55 # first one always dies for some reason.
-NUM_CPU_CORES = 58
-NUM_GPUS = 3.7
-GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+NUM_THREADS = 68 # first one always dies for some reason.
+NUM_CPU_CORES = 53
+NUM_GPUS = 4
+GPU_PER_PROCESS = 1/18 # 1/25 for 3GPUs. # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR Delta 8x GPU
 # NUM_THREADS = 55*2 # first one always dies for some reason.
@@ -77,7 +77,7 @@ GPU_PER_PROCESS = 1/16 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value 
 # NUM_GPUS = 7.5
 # GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
-assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS
+assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS, f"reduce GPU_PER_PROCESS: {GPU_PER_PROCESS} to ensure we have a (portion of a) GPU for each thread."
 
 @ray.remote(num_cpus=0.8, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
 def parallel_caption_extraction(file_batch, itr):
@@ -164,7 +164,7 @@ def run_main():
 def main():
     """ MAIN """
     # ray.shutdown()
-    ray.init(num_gpus=NUM_CPU_CORES, num_cpus=NUM_THREADS, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
+    ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
     print_cluster_stats()
     start = time.time()
     
@@ -229,7 +229,7 @@ def rsync_inputs_to_workers():
     if os.path.exists(INPUT_DIR_ON_SCRATCH):
         print("Copying video files to /tmp")
         # cp = ['cp', '-r', INPUT_DIR_ON_SCRATCH, '/tmp']
-        cp = [f"rsync", "--update", "-r", INPUT_DIR_ON_SCRATCH, INPUT_DIR_TO_TRANSCRIBE]
+        cp = [f"rsync", "--update", "-r", INPUT_DIR_ON_SCRATCH, pathlib.Path(INPUT_DIR_TO_TRANSCRIBE).parent]
         process = Popen(cp, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         # don't block for this.
     #   stdout, stderr = process.communicate()

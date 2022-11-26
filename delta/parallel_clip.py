@@ -36,23 +36,23 @@ hostname = str(result.stdout.strip())
 dir_name = 'parallel_14' # 😁 SET ME 😁
 if 'hal' in hostname:
     REMOTE_WHISPER_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
-    REMOTE_CLIP_PARQUET     = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output.jsonl'
+    REMOTE_CLIP_JSONL     = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output.jsonl'
     REMOTE_INPUT_VIDEO_PATH = f'/home/kastanday/thesis/whisper/{dir_name}'
     LOCAL_VIDEO_PATH        = f'/tmp/{dir_name}'
     LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
     LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
     LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-    LOCAL_CLIP_PARQUET      = f'/tmp/{dir_name}_clip_output.parquet'
+    LOCAL_CLIP_JSONL      = f'/tmp/{dir_name}_clip_output.jsonl'
 elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
     print("RUNNING ON DELTA")
     REMOTE_WHISPER_JSONL_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
     REMOTE_INPUT_VIDEO_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
-    REMOTE_CLIP_PARQUET      = f'/scratch/bbki/kastanday/whisper/{dir_name}_clip_output.parquet'
+    REMOTE_CLIP_JSONL      = f'/scratch/bbki/kastanday/whisper/{dir_name}_clip_output.jsonl'
     LOCAL_INPUT_VIDEO_PATH = f'/tmp/{dir_name}'
     LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
     LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
     LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-    LOCAL_CLIP_PARQUET      = f'/tmp/{dir_name}_clip_output.parquet'
+    LOCAL_CLIP_JSONL      = f'/tmp/{dir_name}_clip_output.jsonl'
 elif any(word in hostname for word in ['aws', 'ec2']): # TODO
     raise NotImplementedError 
 else:
@@ -64,10 +64,10 @@ else:
 # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
-NUM_THREADS = 26 # first one always dies for some reason.
+NUM_THREADS = 14 # first one always dies for some reason.
 NUM_CPU_CORES = 64
 NUM_GPUS = 4
-GPU_PER_PROCESS = 1/4 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+GPU_PER_PROCESS = 1/4 # 1/4 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR Delta 8x GPU
 # NUM_THREADS = 55*2 # first one always dies for some reason.
@@ -80,7 +80,7 @@ NUM_PHYSICAL_CORES_TO_USE = 64
 # FOR HAL 
 # GPU_PER_PROCESS = 1/10 #lots of CPUs per GPU.
 
-@ray.remote(num_cpus=5, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
+@ray.remote(num_cpus=3, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
 def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
     # todo: get around this this import, but idk why it won't recognize it unless it's in here...
     # sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
@@ -89,11 +89,17 @@ def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
     # sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
-    my_clip_preprocesser = DataPreprocessor(video_data_path=LOCAL_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=LOCAL_CLIP_PARQUET, debug=True)
+    my_clip_preprocesser = DataPreprocessor(video_data_path=LOCAL_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path=LOCAL_CLIP_JSONL, debug=False)
     for index, file_stem in enumerate(file_batch):
         try:
+            # print(f"Starting file {file_stem}")
             my_clip_preprocesser.run_clip_one_video(stem_to_filename[file_stem], stem_to_whisper[file_stem])# video filepath, whisper_dict_list
-            print("✅ Success: ", file_stem)
+            print(f"✅ Time to CLIP the video: ⏰ {(time.monotonic() - start)/60:.2f} minutes\nFile: {file_stem}")
+            print(f"")
+        except KeyError as ke:
+            pass # ignore for testing
+            # print("Missing video file: ", file_stem)
+            # todo: write to file just like Daniel.
         except Exception as e:
             # write failed files to jsonlines
             print(f"Error during CLIP: {e}\n{traceback.print_exc()}")
@@ -103,9 +109,6 @@ def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
                 pathlib.Path(error_filepath).touch()
             with jsonlines.open(error_filepath, mode='a') as writer:
                 writer.write({"video_filepath": failed_file_json_object, "error": str(e)}) 
-
-        # one file done        
-        print(f"⏰ Time to Whisper the file: {(time.monotonic() - start)/60:.2f} minutes")
         start = time.monotonic()
 
 def main():
@@ -127,14 +130,14 @@ def main():
     start = time.time()
     
     # REMOVE LOCK before starting run (lock could be there if we crash)
-    lock_file = pathlib.Path(LOCAL_CLIP_PARQUET).parent / (pathlib.Path(LOCAL_CLIP_PARQUET).name + '.lock') # same exact filename, with a second .lock extension.
+    lock_file = pathlib.Path(LOCAL_CLIP_JSONL).parent / (pathlib.Path(LOCAL_CLIP_JSONL).name + '.lock') # same exact filename, with a second .lock extension.
     if os.path.exists(lock_file):
         os.remove(lock_file)
         print("Removed lock file.")
     
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
-    my_clip_preprocesser = DataPreprocessor(video_data_path=LOCAL_INPUT_VIDEO_PATH, audio_jsonl=LOCAL_RESULTS_JSONL, output_path=LOCAL_CLIP_PARQUET, debug=False)
+    my_clip_preprocesser = DataPreprocessor(video_data_path=LOCAL_INPUT_VIDEO_PATH, audio_jsonl=LOCAL_RESULTS_JSONL, output_path=LOCAL_CLIP_JSONL, debug=False)
     video_dir_files, stem_to_filename = my_clip_preprocesser.get_video_dir_files()
     video_stems, stem_to_whisper = my_clip_preprocesser.filter_already_completed_video_stems()
     del my_clip_preprocesser # save memory
