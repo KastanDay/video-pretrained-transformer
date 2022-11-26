@@ -1,4 +1,3 @@
-### Imports
 import os 
 import json
 import cv2
@@ -6,38 +5,30 @@ import numpy as np
 import clip
 import torch
 from PIL import Image
-from tqdm import tqdm
 import pathlib
 from pathlib import Path
 import glob
 import argparse
 import jsonlines
 import json
-import json_numpy
-import pandas as pd
-# import pyarrow as pa
-# import pyarrow.parquet as pq
-import fastparquet 
-# from fastparquet import ParquetFile, write
 import time
-from filelock import FileLock
+import json_tricks # https://github.com/mverleg/pyjson_tricks this looks better than json_numpy. Active dev. Using gzip compression. 
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
 
+'''
+INSTALL INSTRUCTIONS (STRICT dependencies, mostly due to Ray.):
+conda create -n v3_clip_preprocessing_yt1b python=3.8.13 -y
+conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y
+pip install pandas "ray[default]==1.13.0" more_itertools jsonlines json_numpy pyarrow fastparquet pandas parquet ftfy regex tqdm git+https://github.com/openai/CLIP.git
+conda install -c conda-forge -y git-lfs
+cd into the git repo and run `git lfs install` and `git lfs pull`
+(optional) pip install pretty_errors
+'''
 
-# Install depends (STRICT dependencies, mostly due to Ray.):
-# conda create -n v3_clip_preprocessing_yt1b python=3.8.13 -y
-# conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y
-# pip install pandas "ray[default]==1.13.0" more_itertools jsonlines json_numpy pyarrow fastparquet pandas parquet ftfy regex tqdm git+https://github.com/openai/CLIP.git
-# conda install -c conda-forge -y git-lfs
-# cd into the git repo and run `git lfs install` and `git lfs pull`
-# (optional) pip install pretty_errors
-
-FRAME_SIZE_DIMENSION = 224 
-
-# Best models are (1st) ViT-L/14@336px and (2nd) ViT-L/14. I don't recommend going lower. 
-MODEL_SIZE = 'ViT-L/14'
-
+### GLOBALS SET ME 😁 ### 
+MODEL_SIZE = 'ViT-L/14@336px'  # Best models are (1st) ViT-L/14@336px and (2nd) ViT-L/14. I don't recommend going lower.  
+FRAME_SIZE_DIMENSION = 336
 NUM_FRAMES_TO_SAVE_PER_SEGMENT = 1
 
 def parse_cmd_line_args():
@@ -56,7 +47,7 @@ def parse_cmd_line_args():
     # output     = /tmp/parallel_10_clip_dataset.jsonl
     # whisper_in = /tmp/parallel_10_whisper_output.jsonl
     video_input_dir = pathlib.Path(args.video_path)
-    args.output_path = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_clip_output.parquet'))
+    args.output_path = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_clip_output.jsonl'))
     args.audio_jsonl = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
 
     # validate input
@@ -94,6 +85,9 @@ class DataPreprocessor:
         Video_file_stems: all input files (not filtered in any way) 
         stem_to_whisper: stem returns list of whisper dicts. 
         ''' 
+        # time this function
+        start_time = time.monotonic()
+        
         if self.debug:
             print(f"Collecting video file stems in {self.audio_jsonl}")
         self.video_file_stems = [] # all stems
@@ -116,6 +110,7 @@ class DataPreprocessor:
             
         self.video_file_stems = self.video_file_stems
         self.stem_to_whisper = self.stem_to_whisper
+        print(f"⏰ Found {len(self.stem_to_whisper), } whisper objects in {(time.monotonic()-start_time):2f} seconds")
         return self.video_file_stems, self.stem_to_whisper
     
     def get_video_dir_files(self):
@@ -129,6 +124,9 @@ class DataPreprocessor:
         
         for video_dir_file in glob.glob(os.path.join(self.video_data_path, '*'), recursive = True):
             # print(Path(video_dir_file).stem)
+            
+            # TODO: I think this is not working... Not recognizing all the videos we've done. It's also horribly slow.
+            # add a separate json (not jsonl?) that has all the stems we've done. 
             self.video_dir_files.add(str(Path(video_dir_file).stem))
             self.stem_to_filename[str(Path(video_dir_file).stem)] = video_dir_file
         return self.video_dir_files, self.stem_to_filename
@@ -136,20 +134,26 @@ class DataPreprocessor:
 
     def filter_already_completed_video_stems(self,):
         ''' Skil already completed CLIP outputs. '''
-        
-        print("Filtering already completed videos in CLIP {}...".format(self.video_data_path))
-        
         # ensure we collect everything
         if not self.video_file_stems:
             self.get_all_video_file_stems()
         
-        # only load 'video_stem' column, for optimal IO.
         if os.path.exists(self.output_path):
-            already_processed_video_stems = set(fastparquet.ParquetFile(self.output_path).to_pandas(['video_stem']))
+            print(f"Filtering already completed videos in CLIP {self.video_data_path} with existing output in {self.output_path}")
+            already_processed_video_stems = set()
+            with jsonlines.open(self.output_path, mode = 'r') as reader:
+                try:
+                    for line in reader:
+                        if line:
+                            # must load with json_tricks.loads() to undo compression.
+                            already_processed_video_stems.add( json_tricks.loads(line)['video_stem'] )
+                except Exception as e:
+                    print(f"Error: couldn't line from {self.output_path}. Got error: {e}")
+            print("Already procssed:", already_processed_video_stems)
             remaining_stems_for_clip = set(self.video_file_stems) - set(already_processed_video_stems)
-            print(f"Total to process:\t\t\t {len(self.video_file_stems)}")
-            print(f"Already processed:\t\t\t {len(remaining_stems_for_clip)}")
-            print(f"Starting download of remaining:\t\t {len(remaining_stems_for_clip)}")
+            print(f"Total to process:\t\t\t {len(set(self.video_file_stems))}")
+            print(f"Already processed:\t\t\t {len(already_processed_video_stems)}")
+            print(f"Remaining to do now:\t\t {len(remaining_stems_for_clip)}")
             self.video_file_stems = list(remaining_stems_for_clip)
             return self.video_file_stems, self.stem_to_whisper
         else:
@@ -158,7 +162,6 @@ class DataPreprocessor:
             return self.video_file_stems, self.stem_to_whisper
     
     def get_frames_for_segments(self, video_filepath: str, segments):
-        print("Starting get_frames_for_segments")
         if len(segments) == 0:
             return None
 
@@ -210,7 +213,8 @@ class DataPreprocessor:
         sear_frames      = (segments * num_frames * (frame_input_height * frame_input_width * RGB_CHANNELS))
         caption_features = (segments * embd)
         '''
-        print("Starting get_multimodal_features")
+        if self.debug:
+            print("Starting get_multimodal_features")
         segment_frames = self.get_frames_for_segments(video_filepath, segments)
 
         # scene_graph_features = []
@@ -246,7 +250,7 @@ class DataPreprocessor:
 
             image_features = image_features.cpu().numpy().reshape(len(segment_frames), self.num_frames, -1) # -1 == 3.
             text_features = text_features.cpu().numpy()
-            print(f"Time to run clip: {(time.monotonic() - start_time):2f} on {len(segment_frames)* self.num_frames} images")
+            # print(f"Time to run clip: {(time.monotonic() - start_time):2f} on {len(segment_frames)* self.num_frames} images")
         
         if self.debug:
             print("Clip features:")
@@ -262,12 +266,11 @@ class DataPreprocessor:
 
     def run_clip_one_video(self, video_filepath, list_of_whisper_output_dict):
         ''' Basically the main function of this CLIP class. '''
-        print("Starting run_clip_one_video")
-        print("video_filepath: ", video_filepath)
-        # print("list_of_whisper_output_dict: ", list_of_whisper_output_dict)
+        if self.debug: 
+            print("Starting run_clip_one_video")
+            print("video_filepath: ", video_filepath)
         
         # initialize empty sample
-        # whisper_segments = self.stem_to_whisper[video_name] 
         whisper_segments = None
         whisper_segments = list_of_whisper_output_dict
 
@@ -281,13 +284,14 @@ class DataPreprocessor:
         if self.debug:
             print("Obtained multimodal features")
         
+        # Loop over segments. One output per segment. 1+ segment per video.
         list_of_segment_outputs = []
         for i, (image_feature, caption_feature, segment_frame) in enumerate(zip(image_features, caption_features, segment_frames)):
             if self.debug:
                 print(f"Formatting segment {i+1} of {len(image_features)}")
             
             # WARNING: Lists need to be wrapped in a dictinoary (see frame_embeddings)
-            one_segment_output = pd.DataFrame({
+            one_segment_output = {
                 "video_stem": str(Path(video_filepath).stem),
                 "segment_id": str(Path(video_filepath).stem) + f"_{i}",
                 "segment_index": i,
@@ -297,81 +301,28 @@ class DataPreprocessor:
                 "segment_start_time": whisper_segments[i]['start'],
                 "segment_end_time": whisper_segments[i]['end'],
                 "num_frames_per_segment": self.num_frames,
-                "frame_embeddings": image_feature.tobytes(),
-                "text_caption_embeddings": caption_feature.tobytes(),
-                "segment_frames": segment_frame.tobytes(),
-                # "frame_embeddings_shape": image_feature.shape,          # trying the FLATTEN technique!
-                # "text_caption_embeddings_shape": caption_feature.shape,
-                # "segment_frames_shape": segment_frame.shape,
-                # "scene_graph_embeddings": scene_graph_feature -- to be added in the subsequent step.
-            }, index=[i])
-            # print("one_segment_output pandas df:", one_segment_output) # (135, 768)
-            list_of_segment_outputs.append(one_segment_output)
-        
-        segments_of_entire_video = pd.concat(list_of_segment_outputs, ignore_index=True)
-        if self.debug:
-            print(segments_of_entire_video)
-            print("☝️☝️☝️ ALL SEGMENTS CONCATED pandas right before saving to parquet. Does it have frame embeddings???")
-            # single blocking write to parquet.
-            # print("saving pandas pickle!")
-            # segments_of_entire_video.to_pickle('/scratch/bbki/kastanday/whisper/p14.pickle')
-            print(f"Saving to parquet path: {self.output_path}")
-        
-        lock_file = pathlib.Path(self.output_path).parent / (pathlib.Path(self.output_path).name + '.lock') # same exact filename, with a second .lock extension.
-        with FileLock(lock_file): # single threaded writing.
-            if os.path.exists(self.output_path):
-                print("Appending!! to PARQUET")
-                # append if exists
-                # ⚠️ ☢️CRUCIAL that stats=False ☢️ (or else memory error chrash: https://github.com/dask/fastparquet/issues/760)
-                fastparquet.write(self.output_path, segments_of_entire_video, append=True, compression='snappy', file_scheme='simple', stats=False)
-            else:
-                print("Writing!! (no append)")
-                # try with , 
-                fastparquet.write(self.output_path, segments_of_entire_video, append=False, compression='snappy', file_scheme='simple', stats=False)
-        if self.debug:
-            print("✅ Wrote whole video to parquet file!!! 😆")
+                "frame_embeddings": image_feature,
+                "text_caption_embeddings": caption_feature,
+                "segment_frames": segment_frame,
+                "frame_embeddings_shape": image_feature.shape,          # trying the FLATTEN technique!
+                "text_caption_embeddings_shape": caption_feature.shape,
+                "segment_frames_shape": segment_frame.shape,
+                # "scene_graph_captions": scene_graph_feature -- to be added in the subsequent step.
+            }
+            # encode & compress each segment, then write them all at once.
+            # couldn't do compression cuz json doesn't support bytes. LIKE WTFFF WHY NOT.
+            list_of_segment_outputs.append(json_tricks.dumps(one_segment_output)) # , compression=True, properties={'ndarray_compact': True}
             
-            # OLD jsonliense method.
-            # with jsonlines.open('test_jsonlines.jsonl', mode='a') as writer:
-            #     for i, (image_feature, caption_feature, segment_frames) in enumerate(zip(image_features, caption_features, segment_frames)):
-            #         # print(f"Processing segment {i+1} of {len(image_features)}")
-            #         sample_dict = {
-            #             "filename": str(Path(video_filepath).stem),
-            #             "segment_length": whisper_segments[i]['end'] - whisper_segments[i]['start'],
-            #             "captions": whisper_segments[i]['caption'],
-            #             "segment_start_time": whisper_segments[i]['start'],
-            #             "segment_end_time": whisper_segments[i]['end'],
-            #             "frame_embeddings": image_feature.tobytes(),
-            #             "text_caption_embeddings": caption_feature.tobytes(),
-            #             "segment_frames": segment_frames.tobytes(),
-            #             # "scene_graph_embeddings": scene_graph_feature
-            #         }
-            #         writer.write(sample_dict) # WRITE output dataset line.
-
-        # if self.debug:
-        #     print("Constructed training samples")
-
-            
-    # def process_using_audio_dir(self):
-    #     samples_not_found = 0
-    #     total_samples = 0
-
-    #     # TODO: dataformat
-    #     for i in tqdm(range(len(self.video_file_stems))):
-    #         video_name = self.video_file_stems[i]
-    #         if str(video_name) not in self.video_dir_files:
-    #             samples_not_found += 1
-    #         else:
-    #             if self.debug:
-    #                 print("Constructing training samples...")
-    #             self.construct_training_samples(video_name, video_filepath)
-    #         total_samples += 1
-
-    #     print(f"[❌ ERROR ❌] {samples_not_found} of {total_samples} are invalid")
+        # write all at once. Thread safe. This uses more dram, but might be with slow file IO systems. 
+        # Also, writing all at once keeps segments from the same video close together in the json lines, otherwise they're all spread around. 
+        if self.debug:
+            print(f"Saving to CLIP output path: {self.output_path}")
+        with jsonlines.open(self.output_path, mode='a') as writer:
+            writer.write_all(list_of_segment_outputs)
+        if self.debug:
+            print("✅ Wrote whole video to jsonlines!!! 😆")
 
 if __name__ == "__main__":
     args = parse_cmd_line_args()
     data_preprocessor = DataPreprocessor(video_data_path=args.video_path, audio_jsonl=args.audio_jsonl, output_path=args.output_path, debug=False)
-    # data_preprocessor.process_using_audio_dir()
-    
-    
+    # to use this main(), call run_clip_one_video()
