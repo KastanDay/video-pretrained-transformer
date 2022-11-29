@@ -12,9 +12,25 @@ import argparse
 import jsonlines
 import json
 import time
-import json_tricks # https://github.com/mverleg/pyjson_tricks this looks better than json_numpy. Active dev. Using gzip compression. 
+# import json_tricks # https://github.com/mverleg/pyjson_tricks
+# import json_numpy
 
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3' # just for testing.
+
+
+'''
+How to read the outputs:
+
+itterate over arr_0 thru total_segments
+
+pth = '/scratch/bbki/kastanday/whisper/parallel_15_clip_output/LdMD528r6Xs_Jon\'s Daily Hustle_802_Lawn Care Equipment Setup Plans For 2021 - Upgrading Lawn Mowers.npz'
+
+np_loaded = np.load(pth, allow_pickle=True)
+print(np_loaded)
+np_loaded['arr_0'].item()
+
+'''
 
 '''
 INSTALL INSTRUCTIONS (STRICT dependencies, mostly due to Ray.):
@@ -59,14 +75,18 @@ def parse_cmd_line_args():
     return args
 
 class DataPreprocessor: 
-    def __init__(self, video_data_path, audio_jsonl, output_path, num_frames=NUM_FRAMES_TO_SAVE_PER_SEGMENT, debug=True):
-        self.video_data_path = video_data_path
-        self.audio_jsonl = audio_jsonl
-        self.output_path= output_path
+    def __init__(self, video_data_path, audio_jsonl, output_path_dir, num_frames=NUM_FRAMES_TO_SAVE_PER_SEGMENT, debug=True):
+        
+        # prep paths
+        self.video_data_path = str(pathlib.Path(video_data_path))
+        self.audio_jsonl = str(pathlib.Path(audio_jsonl))
+        self.clip_completed_stems_path = str( pathlib.Path(video_data_path).parent / (pathlib.Path(video_data_path).stem + '_clip_completed_stems.jsonl'))
+        self.output_path = str(pathlib.Path(output_path_dir))
+        
         self.video_file_stems = None
         self.num_frames = num_frames
         self.debug = debug
-
+        
         # Load the model
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         # self.device = "cpu"
@@ -75,7 +95,6 @@ class DataPreprocessor:
         self.clip, self.clip_preprocess = clip.load(MODEL_SIZE, self.device)
         if '336' in MODEL_SIZE:
             assert FRAME_SIZE_DIMENSION >= 336, "Frame size must be at least 336px (by 336) for ViT-L/14@336px"
-        
         
         if self.debug:
             print(f"Done setting up CLIP...")
@@ -87,6 +106,10 @@ class DataPreprocessor:
         ''' 
         # time this function
         start_time = time.monotonic()
+        
+        if not os.path.exists(self.audio_jsonl):
+            print(f"No whisper file exists, can't do CLIP without it. Filepath: {self.audio_jsonl}.")
+            exit()
         
         if self.debug:
             print(f"Collecting video file stems in {self.audio_jsonl}")
@@ -119,6 +142,7 @@ class DataPreprocessor:
         stem_to_filename: {} stem --> filename
         '''
         print("Globbing all video files {}...".format(self.video_data_path))
+        start_time = time.monotonic()
         self.video_dir_files = set()
         self.stem_to_filename = {}
         
@@ -129,6 +153,8 @@ class DataPreprocessor:
             # add a separate json (not jsonl?) that has all the stems we've done. 
             self.video_dir_files.add(str(Path(video_dir_file).stem))
             self.stem_to_filename[str(Path(video_dir_file).stem)] = video_dir_file
+        
+        print(f"⏰ Globbed {len(self.video_dir_files), } input videos in {(time.monotonic()-start_time):2f} seconds")
         return self.video_dir_files, self.stem_to_filename
     
 
@@ -138,15 +164,16 @@ class DataPreprocessor:
         if not self.video_file_stems:
             self.get_all_video_file_stems()
         
-        if os.path.exists(self.output_path):
-            print(f"Filtering already completed videos in CLIP {self.video_data_path} with existing output in {self.output_path}")
+        if os.path.exists(self.clip_completed_stems_path):
+            print(f"Filtering already completed videos in CLIP {self.video_data_path} with existing output in {self.clip_completed_stems_path}")
             already_processed_video_stems = set()
-            with jsonlines.open(self.output_path, mode = 'r') as reader:
+            
+            # TODO:
+            with jsonlines.open(self.clip_completed_stems_path, mode = 'r') as reader:
                 try:
                     for line in reader:
                         if line:
-                            # must load with json_tricks.loads() to undo compression.
-                            already_processed_video_stems.add( json_tricks.loads(line)['video_stem'] )
+                            already_processed_video_stems.add( json.loads(line) )
                 except Exception as e:
                     print(f"Error: couldn't line from {self.output_path}. Got error: {e}")
             print("Already procssed:", already_processed_video_stems)
@@ -158,8 +185,13 @@ class DataPreprocessor:
             return self.video_file_stems, self.stem_to_whisper
         else:
             # no output file yet, so process everything.
-            print("Processing all inputs. No CLIP results yet at filpath: {}".format(self.output_path))
+            print("Processing all inputs. No CLIP results yet at filpath: {}".format(self.clip_completed_stems_path))
             return self.video_file_stems, self.stem_to_whisper
+        
+    def save_video_stem(self, video_stem):
+        ''' Save the video stem to the output file. '''
+        with jsonlines.open(self.clip_completed_stems_path, mode = 'a') as writer:
+            writer.write(json.dumps(video_stem))
     
     def get_frames_for_segments(self, video_filepath: str, segments):
         if len(segments) == 0:
@@ -244,7 +276,8 @@ class DataPreprocessor:
 
         print("RIGHT before running clip 📸")
         start_time = time.monotonic()
-        with torch.no_grad():
+        # with torch.no_grad():
+        with torch.inference_mode(): # even more speed optimizations
             image_features = self.clip.encode_image(image_input)
             text_features = self.clip.encode_text(text_inputs)
 
@@ -266,6 +299,7 @@ class DataPreprocessor:
 
     def run_clip_one_video(self, video_filepath, list_of_whisper_output_dict):
         ''' Basically the main function of this CLIP class. '''
+        torch.cuda.empty_cache()
         if self.debug: 
             print("Starting run_clip_one_video")
             print("video_filepath: ", video_filepath)
@@ -294,13 +328,13 @@ class DataPreprocessor:
             one_segment_output = {
                 "video_stem": str(Path(video_filepath).stem),
                 "segment_id": str(Path(video_filepath).stem) + f"_{i}",
-                "segment_index": i,
-                "total_segments": len(whisper_segments),
+                "segment_index": np.int16(i),
+                "total_segments": np.int16(len(whisper_segments)),
                 "segment_total_time": whisper_segments[i]['end'] - whisper_segments[i]['start'],
                 "captions": whisper_segments[i]['caption'],
                 "segment_start_time": whisper_segments[i]['start'],
                 "segment_end_time": whisper_segments[i]['end'],
-                "num_frames_per_segment": self.num_frames,
+                "num_frames_per_segment": np.int16(self.num_frames),
                 "frame_embeddings": image_feature,
                 "text_caption_embeddings": caption_feature,
                 "segment_frames": segment_frame,
@@ -311,16 +345,23 @@ class DataPreprocessor:
             }
             # encode & compress each segment, then write them all at once.
             # couldn't do compression cuz json doesn't support bytes. LIKE WTFFF WHY NOT.
-            list_of_segment_outputs.append(json_tricks.dumps(one_segment_output)) # , compression=True, properties={'ndarray_compact': True}
-            
+            list_of_segment_outputs.append(one_segment_output) # , compression=True, properties={'ndarray_compact': True}
+        
+        # whole_video_df = xarray.concat(list_of_segment_outputs, dim='video_stem') # index is videostem.
+        
         # write all at once. Thread safe. This uses more dram, but might be with slow file IO systems. 
         # Also, writing all at once keeps segments from the same video close together in the json lines, otherwise they're all spread around. 
         if self.debug:
             print(f"Saving to CLIP output path: {self.output_path}")
-        with jsonlines.open(self.output_path, mode='a') as writer:
-            writer.write_all(list_of_segment_outputs)
-        if self.debug:
-            print("✅ Wrote whole video to jsonlines!!! 😆")
+        
+        # SAVE WHOLE VIDEO TO COMPRESSED FILE (named after video_stem)
+        np.savez_compressed( Path(self.output_path) / str(Path(video_filepath).stem), *list_of_segment_outputs)
+        
+        # OLD jsonlines method, too hard to compress.
+        # with jsonlines.open(self.output_path, mode='a') as writer:
+        #     writer.write_all(list_of_segment_outputs)
+        self.save_video_stem(str(Path(video_filepath).stem)) # save completed successfully.
+        print("✅ Wrote whole video to jsonlines!!! 😆")
 
 if __name__ == "__main__":
     args = parse_cmd_line_args()
