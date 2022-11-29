@@ -20,16 +20,16 @@ import time
 
 
 '''
-How to read the outputs:
+⭐️ How to read the CLIP outputs ⭐️
 
 itterate over arr_0 thru total_segments
 
-pth = '/scratch/bbki/kastanday/whisper/parallel_15_clip_output/LdMD528r6Xs_Jon\'s Daily Hustle_802_Lawn Care Equipment Setup Plans For 2021 - Upgrading Lawn Mowers.npz'
-
-np_loaded = np.load(pth, allow_pickle=True)
+path = '/scratch/bbki/kastanday/whisper/parallel_15_clip_output/LdMD528r6Xs_Jon\'s Daily Hustle_802_Lawn Care Equipment Setup Plans For 2021 - Upgrading Lawn Mowers.npz'
+np_loaded = np.load(path, allow_pickle=True)
 print(np_loaded)
-np_loaded['arr_0'].item()
+np_loaded['arr_0'].item() # iterate here until `not .next()`
 
+Docs: https://numpy.org/doc/stable/reference/generated/numpy.savez_compressed.html#numpy.savez_compressed
 '''
 
 '''

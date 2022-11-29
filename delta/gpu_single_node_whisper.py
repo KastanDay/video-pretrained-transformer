@@ -1,3 +1,12 @@
+''' NOTES for further automation 
+ssh <head node>
+
+export CONTAINER=/scratch/bbki/kastanday/whisper/custom_whisper_latest.sif  && \
+  singularity run --bind /scratch:/scratch ${CONTAINER} /bin/bash
+  
+python ~/parallel_pdg/video-pretrained-transformer/delta/gpu_single_node_whisper.py
+'''
+
 import os # must be first
 os.environ['TRANSFORMERS_CACHE'] = '/tmp/huggingface_cache' # must be first
 
@@ -5,7 +14,6 @@ import sys
 # sys.path.append(os.path.join(os.getcwd(),"../data_preprocessing/whisper_audio"))
 sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio")
 import CaptionPreprocessing as CaptionPreprocessing
-print(sys.path)
 
 import pathlib
 import time
@@ -21,65 +29,79 @@ import more_itertools
 import threading
 import jsonlines
 
-global FINAL_RESULTS_DESTINATION
-global INPUT_DIR_ON_SCRATCH
-global INPUT_DIR_TO_TRANSCRIBE
-global LOCAL_RESULTS_JSONL
-global LOCAL_ERRORS_JSONL
-global LOCAL_EMPTY_JSONL
-global LOCAL_CLIP_JSONL
-# get hostname
-result = subprocess.run(["hostname"], capture_output=True, text=True)
-hostname = str(result.stdout.strip())
 
-dir_name = 'parallel_15' # 😁 SET ME 😁
-if 'hal' in hostname:
-    FINAL_RESULTS_DESTINATION = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
-    INPUT_DIR_ON_SCRATCH = f'/home/kastanday/thesis/whisper/{dir_name}'
-    INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
-    LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-    LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-    LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-    LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
-elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
-    FINAL_RESULTS_DESTINATION = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
-    INPUT_DIR_ON_SCRATCH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
-    INPUT_DIR_TO_TRANSCRIBE = f'/tmp/{dir_name}'
-    LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-    LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-    LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-    LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
-elif any(word in hostname for word in ['aws', 'ec2']): # TODO
-    raise NotImplementedError 
-else:
-    raise("No valid hostname error. Exiting")
-## Automating this script
-# ssh <head node>
-# export CONTAINER=/scratch/bbki/kastanday/whisper/custom_whisper_latest.sif  && \
-#  singularity run --bind /scratch:/scratch ${CONTAINER} /bin/bash
-# python ~/parallel_pdg/video-pretrained-transformer/delta/gpu_single_node_whisper.py
+def iter_over_input_dirs():
+    ''' automation '''
+    global FINAL_WHISPER_RESULTS_JSONL
+    global REMOTE_VIDEO_DIR
+    global LOCAL_VIDEO_DIR
+    global LOCAL_RESULTS_JSONL
+    global LOCAL_ERRORS_JSONL
+    global LOCAL_EMPTY_JSONL
+    global NUM_THREADS
+    global NUM_CPU_CORES
+    global NUM_GPUS
+    global GPU_PER_PROCESS
+    # THIS is GREAT balance on delta GPU, 4X GPU with clip running
+    
+    ## TODO: had to ahrdcode these for now
+    NUM_THREADS = 68 # first one always dies for some reason.
+    NUM_CPU_CORES = 53
+    NUM_GPUS = 4
+    GPU_PER_PROCESS = 1/18 # 1/25 for 3GPUs. # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
+    assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS, f"reduce GPU_PER_PROCESS: {GPU_PER_PROCESS} to ensure we have a (portion of a) GPU for each thread."
+    
+    # get hostname
+    result = subprocess.run(["hostname"], capture_output=True, text=True)
+    hostname = str(result.stdout.strip())
+    
+    # 😁 SET ME 😁
+    DIRS_TO_PROCESS = [ 
+                        'parallel_18',
+                        'parallel_19',
+                        # 'parallel_14',
+                    ]
+    
+    for dir_name in DIRS_TO_PROCESS:
+        if 'hal' in hostname:
+            print("ON HAL")
+            FINAL_WHISPER_RESULTS_JSONL = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
+            REMOTE_VIDEO_DIR        = f'/home/kastanday/thesis/whisper/{dir_name}'
+            LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
+            LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+            LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+            LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+        elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
+            print("ON DELTA")
+            FINAL_WHISPER_RESULTS_JSONL = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
+            REMOTE_VIDEO_DIR    = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+            LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
+            LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+            LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+            LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+        elif any(word in hostname for word in ['aws', 'ec2']): 
+            # TODO
+            raise NotImplementedError 
+        else:
+            raise("No valid hostname error. Exiting")
+        
+        rsync_inputs_to_workers() # blocking rsync call.
+        main()
+        
+        # Good vals for Delta CPU nodes. 
+        # NUM_THREADS = 3
+        # NUM_CPUS = 1
+        # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
 
 
-# Good vals for Delta CPU nodes. 
-# NUM_THREADS = 3
-# NUM_CPUS = 1
-# GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
+        # FOR Delta 8x GPU
+        # NUM_THREADS = 55*2 # first one always dies for some reason.
+        # NUM_CPU_CORES = 58*2
+        # NUM_GPUS = 7.5
+        # GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
-# THIS is GREAT balance on delta GPU, 4X GPU with clip running
-NUM_THREADS = 68 # first one always dies for some reason.
-NUM_CPU_CORES = 53
-NUM_GPUS = 4
-GPU_PER_PROCESS = 1/18 # 1/25 for 3GPUs. # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
-# FOR Delta 8x GPU
-# NUM_THREADS = 55*2 # first one always dies for some reason.
-# NUM_CPU_CORES = 58*2
-# NUM_GPUS = 7.5
-# GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
-
-assert NUM_GPUS/(GPU_PER_PROCESS) >= NUM_THREADS, f"reduce GPU_PER_PROCESS: {GPU_PER_PROCESS} to ensure we have a (portion of a) GPU for each thread."
-
-@ray.remote(num_cpus=0.8, num_gpus=GPU_PER_PROCESS) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
+@ray.remote(num_cpus=0.8, num_gpus=1/18) # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
 def parallel_caption_extraction(file_batch, itr):
     # todo: get around this this import, but idk why it won't recognize it unless it's in here...
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio")
@@ -91,7 +113,7 @@ def parallel_caption_extraction(file_batch, itr):
             # check if output already exists
             out_path = pathlib.Path(file)
             out_path =  pathlib.Path(out_path.with_suffix('.wav')).parts[-1]
-            out_path = pathlib.Path(INPUT_DIR_TO_TRANSCRIBE + "_wav" + "/" + out_path)
+            out_path = pathlib.Path(LOCAL_VIDEO_DIR + "_wav" + "/" + out_path)
             
             # todo: check if output exists in whisper file, if so skip, else try again. 
             if os.path.exists(out_path):
@@ -100,10 +122,10 @@ def parallel_caption_extraction(file_batch, itr):
             # if filename stem in jsonlines. whispers...
             
             # MAIN: run whisper
-            process = CaptionPreprocessing.CaptionPreprocessing()
-            process.load_mp4_to_wav_with_outpath(file, out_dir = INPUT_DIR_TO_TRANSCRIBE + "_wav")
+            process = CaptionPreprocessing.CaptionPreprocessing(FINAL_WHISPER_RESULTS_JSONL)
+            process.load_mp4_to_wav_with_outpath(file, out_dir = LOCAL_VIDEO_DIR + "_wav")
             process.get_segments_thresholded()
-            process.output_json(INPUT_DIR_TO_TRANSCRIBE)
+            process.output_json(LOCAL_VIDEO_DIR)
             
             # todo: os.remove(file) -- this assumes that all files will be copied at the start, and that'll work first try.
             # or save a list of already processed files.
@@ -113,7 +135,7 @@ def parallel_caption_extraction(file_batch, itr):
             # write failed files to jsonlines
             print(f"Error during whisper: {e}")
             failed_file_json_object = json.dumps(str(file))
-            error_filepath = INPUT_DIR_TO_TRANSCRIBE + "_whisper_errors.jsonl"
+            error_filepath = LOCAL_VIDEO_DIR + "_whisper_errors.jsonl"
             if not os.path.exists(error_filepath):
                 pathlib.Path(error_filepath).touch()
             with jsonlines.open(error_filepath, mode='a') as writer:
@@ -127,7 +149,7 @@ def parallel_caption_extraction(file_batch, itr):
         print(f"⏰ Time to Whisper the file: {(time.monotonic() - start)/60:.2f} minutes\nVideo filesize: {os.path.getsize(file)/1e6:.2f} MB\n")
         start = time.monotonic()
 
-def run_main():
+def actual_main():
     
     ''' All this is for distributed ray... only using single node rn.'''
     # init ray
@@ -140,10 +162,8 @@ def run_main():
     # assert ray.is_initialized() == True
     # print("🎯 Ray initialized.")
     
-    rsync_inputs_to_workers() # blocking rsync call.
-    
     # first call, then watch memory usage & restart as necessary
-    whisper_thread = threading.Thread(target=main, name="whisper_thread") # , args=some_args
+    whisper_thread = threading.Thread(target=iter_over_input_dirs, name="whisper_thread") # , args=some_args
     whisper_thread.start()
     
     while True: 
@@ -155,7 +175,7 @@ def run_main():
             # time.sleep(2)
             assert ray.is_initialized() == False
             
-            whisper_thread = threading.Thread(target=main, name="whisper_thread") # , args=some_args
+            whisper_thread = threading.Thread(target=iter_over_input_dirs, name="whisper_thread") # , args=some_args
             whisper_thread.start()
             
         time.sleep(120)
@@ -168,15 +188,14 @@ def main():
     print_cluster_stats()
     start = time.time()
     
-    # glob files in INPUT_DIR_TO_TRANSCRIBE
-    print(f"Globbing input files... {INPUT_DIR_TO_TRANSCRIBE}")
-    files = glob.glob(os.path.join(INPUT_DIR_TO_TRANSCRIBE, '*'), recursive = True)
+    # glob files in LOCAL_VIDEO_DIR
+    print(f"Globbing input files... {REMOTE_VIDEO_DIR}")
+    files = glob.glob(os.path.join(REMOTE_VIDEO_DIR, '*'), recursive = True)
     print(f"Second to glob files: {time.time() - start:.3f}")
     print("Number of files:", len(files))
-    print(files)
     
-    # todo: filter out bad files (.vtt and .wav, and .json) Anything other than webm and mp4?
     
+    # filter out bad files (.vtt and .wav, and .json) Anything other than webm and mp4?
     files = [ file for file in files if not file.endswith( ('.txt','.vtt', 'json') ) ]
     print("After filtering -- Number of files:", len(files))
     
@@ -198,8 +217,8 @@ def main():
     print(len(batches), " should equal num threads: ", NUM_THREADS)
     assert len(batches) == (NUM_THREADS)
 
-    if not os.path.isdir(INPUT_DIR_TO_TRANSCRIBE + "_wav"):
-        os.mkdir(INPUT_DIR_TO_TRANSCRIBE + "_wav")
+    if not os.path.isdir(LOCAL_VIDEO_DIR + "_wav"):
+        os.mkdir(LOCAL_VIDEO_DIR + "_wav")
         
     # all_results = ray.get([parallel_caption_extraction.remote(batch, itr) for itr, batch in enumerate(batches)])
     print("Starting parallel batches")
@@ -213,36 +232,35 @@ def main():
 def rsync_inputs_to_workers():
     """ Called before processing begins. """
     jsons_process = None
-    if os.path.exists(FINAL_RESULTS_DESTINATION):
+    if os.path.exists(FINAL_WHISPER_RESULTS_JSONL):
         print("Copying jsons to /tmp")
-        cp = ['cp', FINAL_RESULTS_DESTINATION, '/tmp']
+        cp = ['cp', FINAL_WHISPER_RESULTS_JSONL, '/tmp']
         jsons_process = Popen(cp, stdin=PIPE, stdout=PIPE, stderr=PIPE)
     else:
         print("❌ ERROR: FINAL_RESULTS_DESTINATION does not exist. This is only expected when its your first time processing this file batch.")
         
-    SLEEP_TIME = 120
-    # if we already have some video files locally, don't sleep for long because we already have files ready.
-    if os.path.exists(INPUT_DIR_TO_TRANSCRIBE):
-        SLEEP_TIME = 30
     
-    # video files
+    '''
+    👉 video files -- JUST USE STRAIGHT FROM SCRATCH
+    SLEEP_TIME = 120
+    if we already have some video files locally, don't sleep for long because we already have files ready.
+    if os.path.exists(LOCAL_VIDEO_DIR):
+        SLEEP_TIME = 30
     if os.path.exists(INPUT_DIR_ON_SCRATCH):
         print("Copying video files to /tmp")
         # cp = ['cp', '-r', INPUT_DIR_ON_SCRATCH, '/tmp']
-        cp = [f"rsync", "--update", "-r", INPUT_DIR_ON_SCRATCH, pathlib.Path(INPUT_DIR_TO_TRANSCRIBE).parent]
+        cp = [f"rsync", "--update", "-r", INPUT_DIR_ON_SCRATCH, pathlib.Path(LOCAL_VIDEO_DIR).parent]
         process = Popen(cp, stdin=PIPE, stdout=PIPE, stderr=PIPE)
         # don't block for this.
     #   stdout, stderr = process.communicate()
     else:
         print("❌ ERROR: INPUT_DIR_ON_SCRATCH does not exist. Wrong dir specified??")
+    '''
     
     # start other copies first, but here we block until we get the curcial jsonL file
     if jsons_process:
         print("important to have the '_jsons' before we start. blocking...")
         stdout, stderr = jsons_process.communicate()
-    
-    print("Sleeping for %d seconds to donwload the data..." % SLEEP_TIME)
-    time.sleep(SLEEP_TIME)
     return
 
 def rsync_results_to_scratch():
@@ -259,7 +277,7 @@ def rsync_results_to_scratch():
     Popen(['rsync', '--update', LOCAL_RESULTS_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
     Popen(['rsync', '--update', LOCAL_ERRORS_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
     Popen(['rsync', '--update', LOCAL_EMPTY_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    Popen(['rsync', '--update', LOCAL_CLIP_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    # Popen(['rsync', '--update', LOCAL_CLIP_JSONL, whisper_on_scratch], stdin=PIPE, stdout=PIPE, stderr=PIPE)
     # stdout, stderr = process.communicate()
     return
 
@@ -275,4 +293,4 @@ def print_cluster_stats():
         print(f"        {ray.cluster_resources()['GPU']} GRAPHICCSSZZ cards in total")
 
 if __name__ == '__main__':
-    run_main()
+    actual_main()
