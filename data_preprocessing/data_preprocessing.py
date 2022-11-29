@@ -17,6 +17,20 @@ import json_tricks # https://github.com/mverleg/pyjson_tricks this looks better 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
 
 '''
+⭐️ How to read the CLIP outputs ⭐️
+
+itterate over arr_0 thru total_segments
+
+path = '/scratch/bbki/kastanday/whisper/parallel_15_clip_output/LdMD528r6Xs_Jon\'s Daily Hustle_802_Lawn Care Equipment Setup Plans For 2021 - Upgrading Lawn Mowers.npz'
+np_loaded = np.load(path, allow_pickle=True)
+print(np_loaded)
+np_loaded['arr_0'].item() # iterate here until `not .next()`
+
+Docs: https://numpy.org/doc/stable/reference/generated/numpy.savez_compressed.html#numpy.savez_compressed
+'''
+
+
+'''
 INSTALL INSTRUCTIONS (STRICT dependencies, mostly due to Ray.):
 conda create -n v3_clip_preprocessing_yt1b python=3.8.13 -y
 conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y
@@ -244,7 +258,8 @@ class DataPreprocessor:
 
         print("RIGHT before running clip 📸")
         start_time = time.monotonic()
-        with torch.no_grad():
+        # with torch.no_grad():
+        with torch.inference_mode(): # even faster than no_grad()
             image_features = self.clip.encode_image(image_input)
             text_features = self.clip.encode_text(text_inputs)
 
