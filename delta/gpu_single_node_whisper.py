@@ -57,37 +57,38 @@ def iter_over_input_dirs():
     
     # 😁 SET ME 😁
     DIRS_TO_PROCESS = [ 
-                        'parallel_18',
-                        'parallel_19',
+                        'parallel_16',
+                        # 'parallel_17',
+                        # 'parallel_19',
                         # 'parallel_14',
                     ]
-    
-    for dir_name in DIRS_TO_PROCESS:
-        if 'hal' in hostname:
-            print("ON HAL")
-            FINAL_WHISPER_RESULTS_JSONL = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
-            REMOTE_VIDEO_DIR        = f'/home/kastanday/thesis/whisper/{dir_name}'
-            LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
-            LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-            LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-            LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-        elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
-            print("ON DELTA")
-            FINAL_WHISPER_RESULTS_JSONL = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
-            REMOTE_VIDEO_DIR    = f'/scratch/bbki/kastanday/whisper/{dir_name}'
-            LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
-            LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-            LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-            LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-        elif any(word in hostname for word in ['aws', 'ec2']): 
-            # TODO
-            raise NotImplementedError 
-        else:
-            raise("No valid hostname error. Exiting")
-        
-        rsync_inputs_to_workers() # blocking rsync call.
-        main()
-        
+    # Running it twice to pick up any files lost to stochastic reasons...
+    for attempts in range(2):
+        for dir_name in DIRS_TO_PROCESS:
+            if 'hal' in hostname:
+                print("ON HAL")
+                FINAL_WHISPER_RESULTS_JSONL = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
+                REMOTE_VIDEO_DIR        = f'/home/kastanday/thesis/whisper/{dir_name}'
+                LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
+                LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+                LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+                LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+            elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
+                print("ON DELTA")
+                FINAL_WHISPER_RESULTS_JSONL = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
+                REMOTE_VIDEO_DIR    = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+                LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
+                LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+                LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+                LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+            elif any(word in hostname for word in ['aws', 'ec2']): 
+                # TODO
+                raise NotImplementedError 
+            else:
+                raise("No valid hostname error. Exiting")
+            
+            rsync_inputs_to_workers() # blocking rsync call.
+            main()
         # Good vals for Delta CPU nodes. 
         # NUM_THREADS = 3
         # NUM_CPUS = 1
@@ -183,6 +184,7 @@ def actual_main():
 
 def main():
     """ MAIN """
+
     # ray.shutdown()
     ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
     print_cluster_stats()
@@ -190,7 +192,14 @@ def main():
     
     # glob files in LOCAL_VIDEO_DIR
     print(f"Globbing input files... {REMOTE_VIDEO_DIR}")
-    files = glob.glob(os.path.join(REMOTE_VIDEO_DIR, '*'), recursive = True)
+
+    # If we are on the second run, we should get the first case
+    if os.path.isfile(FINAL_WHISPER_RESULTS_JSONL):
+        file_editor = CaptionPreprocessing.CaptionPreprocessing(FINAL_WHISPER_RESULTS_JSONL)
+        files = file_editor.filter_completed_whisper_paths(REMOTE_VIDEO_DIR)
+    else:
+        files = glob.glob(os.path.join(REMOTE_VIDEO_DIR, '*'), recursive = True)
+    
     print(f"Second to glob files: {time.time() - start:.3f}")
     print("Number of files:", len(files))
     
@@ -228,20 +237,6 @@ def main():
     all_result_futures = [parallel_caption_extraction.remote(batch, itr) for itr, batch in enumerate(batches)]
     
     all_done = ray.get(all_result_futures)
-    
-    # total_files_processed = sum(sum(1 for line in open(LOCAL_VIDEO_DIR)) + )
-
-    try:
-        num_error_files = sum([1 for line in open(LOCAL_ERRORS_JSONL)])
-    except:
-        print("No error files 😥")
-        num_error_files = 0
-    num_processed_files = sum([1 for line in open(LOCAL_RESULTS_JSONL)])
-    total_files = num_processed_files + num_error_files
-    if total_files == true_num_files:
-        print("Processed all videos! Number of failed whisper captions was", num_error_files)
-    else:
-        print("ERROR: Did not process all files. Num of files processed was", total_files, "but expected", true_num_files)
 
     print("Len of all threads: ", len(all_done))
     print("👉 Completed, finished main().")
