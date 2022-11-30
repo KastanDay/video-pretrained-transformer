@@ -198,6 +198,9 @@ def main():
     # filter out bad files (.vtt and .wav, and .json) Anything other than webm and mp4?
     files = [ file for file in files if not file.endswith( ('.txt','.vtt', 'json') ) ]
     print("After filtering -- Number of files:", len(files))
+
+    # To check if we complete all files after job
+    true_num_files = len(files)
     
     # shuffle the list files
     # random.seed(42) # NO SEED, different shuffle each time.
@@ -226,6 +229,20 @@ def main():
     
     all_done = ray.get(all_result_futures)
     
+    # total_files_processed = sum(sum(1 for line in open(LOCAL_VIDEO_DIR)) + )
+
+    try:
+        num_error_files = sum([1 for line in open(LOCAL_ERRORS_JSONL)])
+    except:
+        print("No error files 😥")
+        num_error_files = 0
+    num_processed_files = sum([1 for line in open(LOCAL_RESULTS_JSONL)])
+    total_files = num_processed_files + num_error_files
+    if total_files == true_num_files:
+        print("Processed all videos! Number of failed whisper captions was", num_error_files)
+    else:
+        print("ERROR: Did not process all files. Num of files processed was", total_files, "but expected", true_num_files)
+
     print("Len of all threads: ", len(all_done))
     print("👉 Completed, finished main().")
 
