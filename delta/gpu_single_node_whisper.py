@@ -33,6 +33,7 @@ import jsonlines
 def iter_over_input_dirs():
     ''' automation '''
     global FINAL_WHISPER_RESULTS_JSONL
+    global FINAL_WHISPER_EMPTY_JSONL
     global REMOTE_VIDEO_DIR
     global LOCAL_VIDEO_DIR
     global LOCAL_RESULTS_JSONL
@@ -68,6 +69,7 @@ def iter_over_input_dirs():
             if 'hal' in hostname:
                 print("ON HAL")
                 FINAL_WHISPER_RESULTS_JSONL = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
+                FINAL_WHISPER_EMPTY_JSONL = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_empty.jsonl'
                 REMOTE_VIDEO_DIR        = f'/home/kastanday/thesis/whisper/{dir_name}'
                 LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
                 LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
@@ -76,6 +78,7 @@ def iter_over_input_dirs():
             elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
                 print("ON DELTA")
                 FINAL_WHISPER_RESULTS_JSONL = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
+                FINAL_WHISPER_EMPTY_JSONL = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_empty.jsonl'
                 REMOTE_VIDEO_DIR    = f'/scratch/bbki/kastanday/whisper/{dir_name}'
                 LOCAL_VIDEO_DIR         = f'/tmp/{dir_name}' # used for wavs
                 LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
@@ -196,7 +199,7 @@ def main():
     # If we are on the second run, we should get the first case
     if os.path.isfile(FINAL_WHISPER_RESULTS_JSONL):
         file_editor = CaptionPreprocessing.CaptionPreprocessing(FINAL_WHISPER_RESULTS_JSONL)
-        files = file_editor.filter_completed_whisper_paths(REMOTE_VIDEO_DIR)
+        files = file_editor.filter_completed_whisper_paths(REMOTE_VIDEO_DIR, FINAL_WHISPER_EMPTY_JSONL)
     else:
         files = glob.glob(os.path.join(REMOTE_VIDEO_DIR, '*'), recursive = True)
     
