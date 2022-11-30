@@ -22,7 +22,8 @@ import jsonlines
 
 class CaptionPreprocessing:
     # Takes in a path to an mp4 file, converts it to wav
-    def __init__(self, debug = False):
+    def __init__(self, final_whisper_results_jsonl:str, debug = False):
+        self.final_whisper_results_jsonl = final_whisper_results_jsonl
         self.debug = debug
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(self.device)
@@ -164,18 +165,18 @@ class CaptionPreprocessing:
             writer.write(json_object)
         return
 
-    def filter_completed_whisper_paths(self, video_input_dir):
+    def filter_completed_whisper_paths(self, video_input_dir, empty_file_dir):
         video_input_dir = pathlib.Path(video_input_dir)
-        # todo assert we have things, otherwise call them.
-        fp = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
+        # fp = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
+        fp = str(self.final_whisper_results_jsonl)
         
         # todo: glob all files in input_video_dir
         
         # glob files in INPUT_DIR_TO_TRANSCRIBE
         files = glob.glob(os.path.join(video_input_dir, '*'), recursive = True)
-
+        files = [pathlib.Path(file).stem for file in files]
         ## EXAMPLE CODE.
-        print("Number of files:", len(files))
+        print("Total input video files:", len(files))
         # print(files)
         # whisper_output = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
 
@@ -187,10 +188,21 @@ class CaptionPreprocessing:
         with jsonlines.open(fp, mode = 'r') as reader:
             for line in reader:
                 if line:
-                    existing_whisper_output.add(line[0]['video_filepath'])
+                    line = json.loads(line)
+                    existing_whisper_output.add(line[0]['video_filename_stem'])
         # print(existing_whisper_output)
+        fp = str(empty_file_dir)
 
-
+        # Add empty files that have been processed
+        with jsonlines.open(fp, mode = 'r') as reader:
+            for line in reader:
+                if line:
+                    # line = json.loads(line)
+                    empty_fn = pathlib.Path(line).stem
+                    existing_whisper_output.add(empty_fn)
+        
+        print("Number of existing whisper output:", len(existing_whisper_output))
         remaining_whisper_input = set(files) - set(existing_whisper_output)
+        print("Number of remaining whisper input:", len(remaining_whisper_input))
 
         return list(remaining_whisper_input)
