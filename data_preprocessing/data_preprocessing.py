@@ -130,18 +130,16 @@ class DataPreprocessor:
         self.video_file_stems = [] # all stems
         self.stem_to_whisper = {}  # filename.stem --> whisper_json_object
         with jsonlines.open(self.audio_jsonl) as reader:
-            try:
-                for _, obj in enumerate(reader):
-                    json_objs = json.loads(obj)
-                    for json_obj in json_objs:
-                        self.video_file_stems.append(json_obj['video_filename_stem'])
+            for _, obj in enumerate(reader.iter(skip_invalid=True)):
+                json_objs = json.loads(obj)
+                for json_obj in json_objs:
+                    self.video_file_stems.append(json_obj['video_filename_stem'])
 
-                        if json_obj['video_filename_stem'] not in self.stem_to_whisper:
-                            self.stem_to_whisper[json_obj['video_filename_stem']] = []
-                        
-                        self.stem_to_whisper[json_obj['video_filename_stem']].append(json_obj)
-            except Exception as e:
-                print(f"Error: couldn't read {self.audio_jsonl}. Got error: {e}")
+                    if json_obj['video_filename_stem'] not in self.stem_to_whisper:
+                        self.stem_to_whisper[json_obj['video_filename_stem']] = []
+                    
+                    self.stem_to_whisper[json_obj['video_filename_stem']].append(json_obj)
+
         if self.debug:
             print(f"Done collecting {self.audio_jsonl}")
             
@@ -184,12 +182,10 @@ class DataPreprocessor:
             
             # TODO:
             with jsonlines.open(self.clip_completed_stems_path, mode = 'r') as reader:
-                try:
-                    for line in reader:
-                        if line:
-                            already_processed_video_stems.add( json.loads(line) )
-                except Exception as e:
-                    print(f"Error: couldn't line from {self.output_path}. Got error: {e}")
+                for line in reader.iter(skip_invalid = True):
+                    if line:
+                        already_processed_video_stems.add( json.loads(line) )
+
             print("Already procssed:", already_processed_video_stems)
             remaining_stems_for_clip = set(self.video_file_stems) - set(already_processed_video_stems)
             print(f"Total to process:\t\t\t {len(set(self.video_file_stems))}")
@@ -375,7 +371,7 @@ class DataPreprocessor:
         # with jsonlines.open(self.output_path, mode='a') as writer:
         #     writer.write_all(list_of_segment_outputs)
         self.save_video_stem(str(Path(video_filepath).stem)) # save completed successfully.
-        print("✅ Wrote whole video to jsonlines!!! 😆")
+        # print("✅ Wrote whole video to jsonlines!!! 😆")
 
 if __name__ == "__main__":
     args = parse_cmd_line_args()
