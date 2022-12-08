@@ -148,6 +148,9 @@ class CaptionPreprocessing:
                 break
         # this is the list of words, with timestamps
         self.curr_dict_list = curr_dict_list
+        
+        # hopefully limit memory usage
+        torch.cuda.empty_cache()
         return curr_dict_list
 
     def output_json(self, input_video_dir):
@@ -174,7 +177,7 @@ class CaptionPreprocessing:
         
         # glob files in INPUT_DIR_TO_TRANSCRIBE
         files = glob.glob(os.path.join(video_input_dir, '*'), recursive = True)
-        files = [pathlib.Path(file).stem for file in files]
+        files = [pathlib.Path(file) for file in files]
         ## EXAMPLE CODE.
         print("Total input video files:", len(files))
         # print(files)
@@ -184,25 +187,29 @@ class CaptionPreprocessing:
         # self.output_path
 
         # self.video_file_stems
+        # These are the non-empty files
         existing_whisper_output = set()
         with jsonlines.open(fp, mode = 'r') as reader:
-            for line in reader:
+            for line in reader.iter(skip_invalid=True):
                 if line:
                     line = json.loads(line)
-                    existing_whisper_output.add(line[0]['video_filename_stem'])
-        # print(existing_whisper_output)
-        fp = str(empty_file_dir)
+                    filename = pathlib.Path(line[0]["video_filepath"]).name
+                    existing_whisper_output.add(pathlib.Path(os.path.join(video_input_dir, filename)))
 
+        print("👉👉fp", fp)
+        fp = str(empty_file_dir)
         # Add empty files that have been processed
+
         with jsonlines.open(fp, mode = 'r') as reader:
-            for line in reader:
+            for line in reader.iter(skip_invalid=True):
                 if line:
                     # line = json.loads(line)
-                    empty_fn = pathlib.Path(line).stem
-                    existing_whisper_output.add(empty_fn)
+                    filename = pathlib.Path(line).name
+                    existing_whisper_output.add(pathlib.Path(os.path.join(video_input_dir, filename)))
+        # print(existing_whisper_output)
+
         
         print("Number of existing whisper output:", len(existing_whisper_output))
         remaining_whisper_input = set(files) - set(existing_whisper_output)
         print("Number of remaining whisper input:", len(remaining_whisper_input))
-
         return list(remaining_whisper_input)

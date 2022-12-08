@@ -58,10 +58,12 @@ def iter_over_input_dirs():
     
     # 😁 SET ME 😁
     DIRS_TO_PROCESS = [ 
-                        'parallel_16',
+                        # 'parallel_16',
                         # 'parallel_17',
-                        # 'parallel_19',
+                        # 'parallel_18'
                         # 'parallel_14',
+                        "parallel_29"
+                        # "parallel_21"
                     ]
     # Running it twice to pick up any files lost to stochastic reasons...
     for attempts in range(2):
@@ -114,25 +116,11 @@ def parallel_caption_extraction(file_batch, itr):
     for index, file in enumerate(file_batch):
         process = None
         try:
-            # check if output already exists
-            out_path = pathlib.Path(file)
-            out_path =  pathlib.Path(out_path.with_suffix('.wav')).parts[-1]
-            out_path = pathlib.Path(LOCAL_VIDEO_DIR + "_wav" + "/" + out_path)
-            
-            # todo: check if output exists in whisper file, if so skip, else try again. 
-            if os.path.exists(out_path):
-                print(f'Input file: f{file} -- already processed, skipping')
-            
-            # if filename stem in jsonlines. whispers...
-            
             # MAIN: run whisper
             process = CaptionPreprocessing.CaptionPreprocessing(FINAL_WHISPER_RESULTS_JSONL)
             process.load_mp4_to_wav_with_outpath(file, out_dir = LOCAL_VIDEO_DIR + "_wav")
             process.get_segments_thresholded()
             process.output_json(LOCAL_VIDEO_DIR)
-            
-            # todo: os.remove(file) -- this assumes that all files will be copied at the start, and that'll work first try.
-            # or save a list of already processed files.
             
             print("✅ Success: ", file)
         except Exception as e:
@@ -150,7 +138,7 @@ def parallel_caption_extraction(file_batch, itr):
                 del process
 
         # one file done        
-        print(f"⏰ Time to Whisper the file: {(time.monotonic() - start)/60:.2f} minutes\nVideo filesize: {os.path.getsize(file)/1e6:.2f} MB\n")
+        # print(f"⏰ Time to Whisper the file: {(time.monotonic() - start)/60:.2f} minutes\nVideo filesize: {os.path.getsize(file)/1e6:.2f} MB\n")
         start = time.monotonic()
 
 def actual_main():
@@ -208,7 +196,8 @@ def main():
     
     
     # filter out bad files (.vtt and .wav, and .json) Anything other than webm and mp4?
-    files = [ file for file in files if not file.endswith( ('.txt','.vtt', 'json') ) ]
+    
+    files = [ str(file) for file in files if not str(file).endswith( ('.txt','.vtt', 'json') ) ]
     print("After filtering -- Number of files:", len(files))
 
     # To check if we complete all files after job

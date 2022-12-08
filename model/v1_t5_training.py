@@ -2,6 +2,7 @@ import jsonlines
 import os
 import json
 import glob
+import traceback
 import numpy as np
 import pathlib
 from numpy import load
@@ -72,7 +73,6 @@ def log_gradient_norm():
 # Initialize embeddings
 one_input_shape = [1, 768, 768]
 att_mask_shape = [1, 768]
-embed_shape = [1, 768]
 
 input_embeds_arr = torch.zeros(one_input_shape).to(device) # .astype(np.float16)
 attn_mask_arr    = torch.zeros(att_mask_shape).to(device)
@@ -88,59 +88,61 @@ with jsonlines.open(REMOTE_SCENE_FILE, 'r') as scene_reader:
     for scene_seg_list, clip_npz_path in tqdm.tqdm(zip(scene_reader, glob.glob(os.path.join(REMOTE_CLIP_DIR, '*'), recursive = True))):
         try:
             np_loaded = np.load(clip_npz_path, allow_pickle=True)
+            object_list_of_str = []
+            scene_seg_list = json.loads(scene_seg_list)
         except Exception as e:
             print(f"Failed to load compressed numpy: {e}")
             continue
-        object_list_of_str = []
-        scene_seg_list = json.loads(scene_seg_list)
         
         # iterate over segments
         for segment_index in range(np_loaded['arr_0'].item()['total_segments']):
-            # print(np_loaded[f'arr_{segment_index}'].item()['captions'])
-            frame_embedding       = np_loaded[f'arr_{segment_index}'].item()['frame_embeddings']
-            caption_embedding     = np_loaded[f'arr_{segment_index}'].item()['text_caption_embeddings']
-            whisper_text_captions = np_loaded[f'arr_{segment_index}'].item()['captions']
-            
-            frame_embedding       = torch.from_numpy(frame_embedding.reshape((768,))).to(device)
-            caption_embedding     = torch.from_numpy(caption_embedding).to(device)
+            try:
+                # print(np_loaded[f'arr_{segment_index}'].item()['captions'])
+                frame_embedding       = np_loaded[f'arr_{segment_index}'].item()['frame_embeddings']
+                caption_embedding     = np_loaded[f'arr_{segment_index}'].item()['text_caption_embeddings']
+                whisper_text_captions = np_loaded[f'arr_{segment_index}'].item()['captions']
+                
+                frame_embedding       = torch.from_numpy(frame_embedding.reshape((768,))).to(device)
+                caption_embedding     = torch.from_numpy(caption_embedding).to(device)
 
-            scene_caption = scene_seg_list[segment_index]
-            scene_caption = clip.tokenize(scene_caption).to(device)
-            with torch.inference_mode(): # even faster than no_grad()
-                scene_embedding = clip_instance.encode_text(scene_caption)
-            scene_embedding = scene_embedding.reshape((768,))
-
-            # Update embedding array
-            input_embeds_arr[0][0] = frame_embedding
-            input_embeds_arr[0][1] = caption_embedding
-            input_embeds_arr[0][2] = scene_embedding
-            # Set to torch
-            decoder_input_embeds_arr = np.random.rand( *one_input_shape )  # .astype(np.float16) # need fp32
-            decoder_input_embeds_arr = decoder_input_embeds_arr
-            input_embeds_arr = input_embeds_arr
-            attn_mask_arr = attn_mask_arr
-            
-            # print("Input shapes:", scene_embedding, caption_embedding, frame_embedding)
-            labels = t5_tokenizer(whisper_text_captions, return_tensors="pt").input_ids.to(device)
-            # outputs = t5.forward(inputs_embeds=input_embeds_arr, attention_mask=attn_mask_arr, decoder_inputs_embeds=input_embeds_arr)
-            outputs = t5.forward(inputs_embeds=input_embeds_arr, attention_mask=attn_mask_arr, labels=labels)
-            # outputs = t5.forward(inputs_embeds=input_embeds_arr, labels=labels)
-            loss = outputs[0]
-            wandb.log({"loss": loss})
-            log_gradient_norm()
-            
-            ''' backwards pass '''
-            optimizer.zero_grad()
-            loss.sum().backward()
-            optimizer.step()
-            train_itr += 1
-        
-        # save checkpoints
-        if train_itr % 1000 == 0:
-            print("SAVING MODEL CHECKPOING TO: ", f"{MODEL_VERSION_NAME}_iter{train_itr}")
-            MODEL_SAVE_PATH = f"{MODEL_VERSION_NAME}_iter{train_itr}"
-            t5.save_pretrained(MODEL_SAVE_PATH)
-
+                scene_caption = scene_seg_list[segment_index]
+                scene_caption = clip.tokenize(scene_caption).to(device)
+                with torch.inference_mode(): # even faster than no_grad()
+                    scene_embedding = clip_instance.encode_text(scene_caption)
+                scene_embedding = scene_embedding.reshape((768,))
+                
+                # Update embedding array
+                input_embeds_arr[0][0] = frame_embedding
+                input_embeds_arr[0][1] = caption_embedding
+                input_embeds_arr[0][2] = scene_embedding
+                # Set to torch
+                decoder_input_embeds_arr = np.random.rand( *one_input_shape )  # .astype(np.float16) # need fp32
+                decoder_input_embeds_arr = decoder_input_embeds_arr
+                
+                print("Input shapes:", scene_embedding, caption_embedding, frame_embedding)
+                
+                
+                ''' Forward pass '''
+                labels = t5_tokenizer(whisper_text_captions, return_tensors="pt").input_ids.to(device)
+                outputs = t5.forward(inputs_embeds=input_embeds_arr, attention_mask=attn_mask_arr, labels=labels)
+                loss = outputs[0]
+                wandb.log({"loss": loss})
+                
+                ''' Backwards pass '''
+                optimizer.zero_grad()
+                loss.sum().backward()
+                optimizer.step()
+                train_itr += 1
+                # save checkpoints
+                # save checkpoints
+                if train_itr % 1500 == 0:
+                    print("SAVING MODEL CHECKPOING TO: ", f"{MODEL_VERSION_NAME}_iter{train_itr}")
+                    MODEL_SAVE_PATH = f"{MODEL_VERSION_NAME}_iter{train_itr}"
+                    t5.save_pretrained(MODEL_SAVE_PATH)
+            except Exception as e:
+                print("During training loop: ", e)
+                print(traceback.format_exc())
+                continue
 
 print(f"✅ Finished_training_batch_{BATCH_NAME}")
 t5.save_pretrained(f"{BASE_DIR}/MODEL_CHECKPOINTS/Finished_training_batch_{BATCH_NAME}")
