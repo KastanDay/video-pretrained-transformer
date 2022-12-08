@@ -11,18 +11,29 @@ import tqdm
 import wandb
 wandb.init("custom-t5")
 
-dir_name = "parallel_15"
-REMOTE_WHISPER_FILE = f'/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/{dir_name}_whisper_output.jsonl'
-REMOTE_CLIP_DIR  = f'/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/{dir_name}_clip_output'
-REMOTE_SCENE_FILE = f'/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/{dir_name}_scene_output.jsonl'
+BATCH_NAME          = "parallel_15"
+MODEL_VERSION_NAME  = 'yt_pretrain'
+BASE_DIR            = '/scratch/bbki/kastanday/whisper'
+MODEL_SAVE_PATH     = f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}'
+REMOTE_WHISPER_FILE = f'{BASE_DIR}/{BATCH_NAME}_whisper_output.jsonl'
+REMOTE_CLIP_DIR     = f'{BASE_DIR}/{BATCH_NAME}_clip_output'
+REMOTE_SCENE_FILE   = f'{BASE_DIR}/{BATCH_NAME}_scene_output.jsonl'
+
+# hyperparams 
+learning_rate = 1e-4
+
+wandb.config = {'learning_rate'     : learning_rate,
+                'batch_name'        : BATCH_NAME,
+                'model_save_path'   : MODEL_SAVE_PATH,
+                }
 
 # Instantiate clip
 import clip
 import torch
 MODEL_SIZE = 'ViT-L/14@336px'  # Best models are (1st) ViT-L/14@336px and (2nd) ViT-L/14. I don't recommend going lower.  
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print("Device: ", device)
 clip_instance, clip_preprocess = clip.load(MODEL_SIZE, device)
-
 
 '''
 T5 MODEL SELECTION
@@ -39,18 +50,24 @@ google/t5-v1_1-large
 '''
 
 from transformers import T5Tokenizer, T5ForConditionalGeneration, T5Model, T5Config, AutoModelWithLMHead
-# MODEL_SIZE = "t5-base"
-MODEL_NAME = "google/t5-v1_1-base"
-# MODEL_NAME = "google/t5-base-lm-adapt"
-# config = T5Config.from_pretrained(MODEL_NAME)
-t5 = T5ForConditionalGeneration.from_pretrained(MODEL_NAME, torch_dtype=torch.float32, low_cpu_mem_usage=False).to(device) # float16, True
-t5_tokenizer = T5Tokenizer.from_pretrained(MODEL_NAME, return_special_tokens_mask=True)
+t5 = T5ForConditionalGeneration.from_pretrained(MODEL_SAVE_PATH, torch_dtype=torch.float32, low_cpu_mem_usage=False).to(device) # float16, True
+t5_tokenizer = T5Tokenizer.from_pretrained("google/t5-v1_1-base", return_special_tokens_mask=True)
 # low_cpu_mem_usage(bool, optional) — Tries to not use more than 1x model size in CPU memory (including peak memory) while loading the model. experimental.
-optimizer = torch.optim.Adam(params =  t5.parameters(), lr=1e-4) # Typically, 1e-4 and 3e-4 work well for most problems
+optimizer = torch.optim.Adam(params =  t5.parameters(), lr=learning_rate) # Typically, 1e-4 and 3e-4 work well for most problems
 
 
-# Iterate through the batch
-clip_15 = os.listdir(REMOTE_CLIP_DIR)
+def log_gradient_norm():
+    try: 
+        total_norm = 0
+        parameters = [p for p in t5.parameters() if p.grad is not None and p.requires_grad]
+        for p in parameters:
+            param_norm = p.grad.detach().data.norm(2)
+            total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** 0.5
+        wandb.log({"total_gradient_norm": total_norm})
+        return total_norm
+    except Exception as e:
+        print("Failed to log gradient norm: ", e)
 
 # Initialize embeddings
 one_input_shape = [1, 768, 768]
@@ -110,19 +127,20 @@ with jsonlines.open(REMOTE_SCENE_FILE, 'r') as scene_reader:
             # outputs = t5.forward(inputs_embeds=input_embeds_arr, labels=labels)
             loss = outputs[0]
             wandb.log({"loss": loss})
+            log_gradient_norm()
             
             ''' backwards pass '''
             optimizer.zero_grad()
             loss.sum().backward()
             optimizer.step()
             train_itr += 1
-            # print
-            if train_itr % 500 == 0:
-              print("Loss 👇👇👇")
-              print(loss)
         
         # save checkpoints
-        if train_itr % 500 == 0:
-          t5.save_pretrained('v1_VPT_model')
+        if train_itr % 1000 == 0:
+            print("SAVING MODEL CHECKPOING TO: ", f"{MODEL_VERSION_NAME}_iter{train_itr}")
+            MODEL_SAVE_PATH = f"{MODEL_VERSION_NAME}_iter{train_itr}"
+            t5.save_pretrained(MODEL_SAVE_PATH)
 
-t5.save_pretrained("BIG_PENIS_PREVAILS")
+
+print(f"✅ Finished_training_batch_{BATCH_NAME}")
+t5.save_pretrained(f"{BASE_DIR}/MODEL_CHECKPOINTS/Finished_training_batch_{BATCH_NAME}")
