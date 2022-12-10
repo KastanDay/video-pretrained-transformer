@@ -50,7 +50,7 @@ Docs: https://numpy.org/doc/stable/reference/generated/numpy.savez_compressed.ht
 INSTALL INSTRUCTIONS (STRICT dependencies, mostly due to Ray.):
 conda create -n v3_clip_preprocessing_yt1b python=3.8.13 -y
 conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y
-pip install pandas "ray[default]==1.13.0" more_itertools jsonlines json_numpy pyarrow fastparquet pandas parquet ftfy regex tqdm git+https://github.com/openai/CLIP.git
+pip install pandas "ray[default]==1.13.0" more_itertools jsonlines pyarrow fastparquet pandas parquet ftfy regex tqdm git+https://github.com/openai/CLIP.git
 conda install -c conda-forge -y git-lfs
 cd into the git repo and run `git lfs install` and `git lfs pull`
 (optional) pip install pretty_errors
