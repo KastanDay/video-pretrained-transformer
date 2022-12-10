@@ -48,10 +48,10 @@ def run_main():
     global GPU_PER_PROCESS
     
     # THIS is GREAT balance on delta GPU, 4X GPU with clip running
-    NUM_THREADS = 16     # Number of parallel processes (limited by DRAM and SRAM)
-    NUM_CPU_CORES = 64   # Numer of available physical cores to use (use max!)
-    NUM_GPUS = 4         # Number of physical GPUs to use (use max)
-    GPU_PER_PROCESS = 1/4 # threads per GPU, limited by OOM errors while also maximizing spread. 
+    NUM_THREADS = 20      # Number of parallel processes (limited by DRAM and SRAM)
+    NUM_CPU_CORES = 64    # Numer of available physical cores to use (use max!)
+    NUM_GPUS = 4          # Number of physical GPUs to use (use max)
+    GPU_PER_PROCESS = 1/5 # threads per GPU, limited by OOM errors while also maximizing spread. 
     
     # NUM_CPU_CORES/NUM_THREADS
     
@@ -67,49 +67,58 @@ def run_main():
     print("🎯 Ray initialized.")
     print_cluster_stats()
     
-    # todo: loop over dirs. but I need to load new ones thru whisper.
     # 😁 SET ME 😁
     DIRS_TO_PROCESS = [ 
-                        'parallel_16',
-                        # 'parallel_14',
-                        # 'parallel_14',
+                        'parallel_12'
+                        # 'parallel_11'
+                        # 'parallel_18',
+                        # 'parallel_19'
                     ]
     for dir_name in DIRS_TO_PROCESS:
-        # get hostname
-        result = subprocess.run(["hostname"], capture_output=True, text=True)
-        hostname = str(result.stdout.strip())
-        
-        if 'hal' in hostname:
-            REMOTE_WHISPER_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
-            REMOTE_CLIP_OUTPUT_DIR     = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output'
-            REMOTE_INPUT_VIDEO_PATH = f'/home/kastanday/thesis/whisper/{dir_name}'
-            LOCAL_INPUT_VIDEO_PATH        = f'/tmp/{dir_name}'
-            LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-            LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-            LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-            LOCAL_CLIP_JSONL      = f'/tmp/{dir_name}_clip_output.jsonl'
-        elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
-            print("RUNNING ON DELTA")
-            REMOTE_WHISPER_JSONL_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
-            REMOTE_INPUT_VIDEO_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
-            REMOTE_CLIP_OUTPUT_DIR  = f'/scratch/bbki/kastanday/whisper/{dir_name}_clip_output'
-            LOCAL_INPUT_VIDEO_PATH  = f'/tmp/{dir_name}'
-            LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-            LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-            LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-            LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
-        elif any(word in hostname for word in ['aws', 'ec2']): # TODO
-            raise NotImplementedError 
-        else:
-            raise("No valid hostname error. Exiting")
-        
-        # make output dir
-        pathlib.Path(REMOTE_CLIP_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
-        # RUN MAIN with current settings.
-        main()
+        # run everything twice to mitigate errors (will skip completed work)
+        for i in range(2):
+            # get hostname
+            result = subprocess.run(["hostname"], capture_output=True, text=True)
+            hostname = str(result.stdout.strip())
+            
+            if 'hal' in hostname:
+                REMOTE_WHISPER_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
+                REMOTE_CLIP_OUTPUT_DIR     = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output'
+                REMOTE_INPUT_VIDEO_PATH = f'/home/kastanday/thesis/whisper/{dir_name}'
+                LOCAL_INPUT_VIDEO_PATH        = f'/tmp/{dir_name}'
+                LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+                LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+                LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+                LOCAL_CLIP_JSONL      = f'/tmp/{dir_name}_clip_output.jsonl'
+            elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
+                print("RUNNING ON DELTA")
+                REMOTE_WHISPER_JSONL_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
+                REMOTE_INPUT_VIDEO_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+                REMOTE_CLIP_OUTPUT_DIR  = f'/scratch/bbki/kastanday/whisper/{dir_name}_clip_output'
+                LOCAL_INPUT_VIDEO_PATH  = f'/tmp/{dir_name}'
+                LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+                LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+                LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+                LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
+            elif any(word in hostname for word in ['aws', 'ec2']): # TODO
+                raise NotImplementedError 
+            else:
+                raise("No valid hostname error. Exiting")
+            
+            # ensure no cuda OOM errors on 2nd run.
+            if i == 1:
+                GPU_PER_PROCESS = 1 
+                NUM_THREADS = 4
+            
+            # make output dir
+            if not os.path.exists(REMOTE_CLIP_OUTPUT_DIR):
+                pathlib.Path(REMOTE_CLIP_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+            
+            # RUN MAIN with current settings.
+            main()
 
 @ray.remote(num_cpus=2, num_gpus=1/4)
-def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
+def parallel_clip(file_batch, stem_to_filename, stem_to_whisper):
     start = time.monotonic()
     # sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")  # Kastan server
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing") # Delta
@@ -119,8 +128,7 @@ def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
         try:
             # print(f"Starting file {file_stem}")
             my_clip_preprocesser.run_clip_one_video(stem_to_filename[file_stem], stem_to_whisper[file_stem])# video filepath, whisper_dict_list
-            print(f"✅ Time to CLIP the video: ⏰ {(time.monotonic() - start)/60:.2f} minutes\nFile: {file_stem}")
-            print(f"")
+            print(f"✅ Time to CLIP the video: ⏰ {(time.monotonic() - start)/60:.2f} minutes\nFile: {file_stem}. Dir: {REMOTE_CLIP_OUTPUT_DIR}")
         except KeyError as ke:
             pass # ignore for testing
             # print("Missing video file: ", file_stem)
@@ -129,7 +137,7 @@ def parallel_caption_extraction(file_batch, stem_to_filename, stem_to_whisper):
             # write failed files to jsonlines
             print(f"Error during CLIP: {e}\n{traceback.print_exc()}")
             failed_file_json_object = json.dumps(str(file_stem))
-            error_filepath = LOCAL_INPUT_VIDEO_PATH + "_whisper_errors.jsonl"
+            error_filepath = LOCAL_INPUT_VIDEO_PATH + "_clip_errors.jsonl"
             if not os.path.exists(error_filepath):
                 pathlib.Path(error_filepath).touch()
             with jsonlines.open(error_filepath, mode='a') as writer:
@@ -159,7 +167,7 @@ def main():
 
     # all_results = ray.get([parallel_caption_extraction.remote(batch, itr) for itr, batch in enumerate(batches)])
     print("Starting parallel batches")
-    all_result_futures = [parallel_caption_extraction.remote(batch, stem_to_filename, stem_to_whisper) for itr, batch in enumerate(batches)]
+    all_result_futures = [parallel_clip.remote(batch, stem_to_filename, stem_to_whisper) for itr, batch in enumerate(batches)]
     
     all_done = ray.get(all_result_futures)
     

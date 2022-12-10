@@ -272,7 +272,7 @@ class DataPreprocessor:
             if len(frames_list) == 0:
                 continue
 
-            assert len(frames_list) <= 3
+            assert len(frames_list) <= 3 # we only expect <3 img/segment.
             
             # WE now resize ALL frames in the get_frames function, for consistent memory usage and everything.
             # resized_frames = [Image.fromarray(cv2.resize(np.array(frames_list[frame_idx]), dsize=(FRAME_SIZE_DIMENSION, FRAME_SIZE_DIMENSION), interpolation=cv2.INTER_CUBIC)) for frame_idx in range(len(frames_list))]
