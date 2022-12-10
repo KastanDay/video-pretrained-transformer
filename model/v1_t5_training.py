@@ -11,6 +11,12 @@ import tqdm
 import wandb
 wandb.init("custom-t5")
 
+# Cockpit ML Debugger
+# https://cockpit.readthedocs.io/en/latest/examples/01_basic_fmnist.html
+from backpack import extend
+from cockpit import Cockpit, CockpitPlotter
+from cockpit.utils.configuration import configuration
+
 dir_name = "parallel_15"
 REMOTE_WHISPER_FILE = f'/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/{dir_name}_whisper_output.jsonl'
 REMOTE_CLIP_DIR  = f'/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/{dir_name}_clip_output'
