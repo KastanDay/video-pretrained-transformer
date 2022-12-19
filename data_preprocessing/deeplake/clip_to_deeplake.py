@@ -10,20 +10,18 @@ import time
 import cv2
 import pathlib
 
-dataset_name        = '/mnt/storage_ssd/FULL_parallel_ingest_p17'
+DATASET_PATH        = '/mnt/storage_ssd/FULL_parallel_ingest_p17'
 BASE_DIR            = '/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/'
 # BASE_DIR            = '/mnt/storage_ssd/'
 BATCH_NAME          = 'parallel_17'
-# BASE_DIR            = '/scratch/bbki/kastanday/whisper'
-# MODEL_SAVE_PATH     = f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}'
 REMOTE_WHISPER_FILE = f'{BASE_DIR}/{BATCH_NAME}_whisper_output.jsonl'
 REMOTE_CLIP_DIR     = f'{BASE_DIR}/{BATCH_NAME}_clip_output'
 REMOTE_SCENE_FILE   = f'{BASE_DIR}/{BATCH_NAME}_scene_output.jsonl'
 
 def main():
     ''' Create dataset '''
-    if os.path.exists(dataset_name):
-        ds = deeplake.load(dataset_name)
+    if os.path.exists(DATASET_PATH):
+        ds = deeplake.load(DATASET_PATH)
         print(ds.summary())
         all_stems = ds.video_stem.data()['value']
         already_completed_stems = set(all_stems)
@@ -31,11 +29,11 @@ def main():
     else:
         print("Creating new dataset, sleeping 6 seconds to allow you to cancel.")  
         time.sleep(6)
-        ds = deeplake.empty(dataset_name, overwrite=True)
+        ds = deeplake.empty(DATASET_PATH, overwrite=True)
         already_completed_stems = set()  # empty
         with ds:
             segment_frames          = ds.create_tensor('segment_frames', htype='image', dtype=np.uint8, sample_compression='jpg')
-            video_stem              = ds.create_tensor('video_stem', htype='text', dtype=str, sample_compression=None)
+            video_name              = ds.create_tensor('video_name', htype='text', dtype=str, sample_compression=None)
             text_caption_embeddings = ds.create_tensor('text_caption_embeddings', htype='image', dtype=np.float16, sample_compression='lz4') # CLIP produces FP16 embeddings.
             frame_embeddings        = ds.create_tensor('frame_embeddings', htype='image', dtype=np.float16, sample_compression='lz4') # compression: https://docs.deeplake.ai/en/latest/Compressions.html
             segment_metadata_json   = ds.create_tensor('segment_metadata', htype='json', sample_compression='lz4') # compression: https://docs.deeplake.ai/en/latest/Compressions.html
@@ -51,8 +49,6 @@ def main():
     print("\n".join(novel_filepaths[:10]))
         
     # assert find parallel_15_clip_completed | wc -l == clip_path_and_scene_graph + len(all_stems)
-
-
     import more_itertools 
     batches_of_inputs = more_itertools.chunked(novel_filepaths, 100)
     for batch in batches_of_inputs:

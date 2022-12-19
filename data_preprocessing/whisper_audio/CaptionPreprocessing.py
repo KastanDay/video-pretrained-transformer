@@ -22,12 +22,12 @@ import jsonlines
 
 class CaptionPreprocessing:
     # Takes in a path to an mp4 file, converts it to wav
-    def __init__(self, final_whisper_results_jsonl:str, debug = False):
-        self.final_whisper_results_jsonl = final_whisper_results_jsonl
+    def __init__(self, debug = False):
+        # self.final_whisper_results_jsonl = final_whisper_results_jsonl
         self.debug = debug
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(self.device)
-        self.whisper_model = annotator_lhotse("base", device = self.device)
+        self.whisper_model = annotator_lhotse("medium", device = self.device)
 
     def process_mp4(self, path):
         self.cut = None
@@ -125,6 +125,7 @@ class CaptionPreprocessing:
         time_dict_list = to_time_dict()
         curr_dict_list = []
         index = 0
+        segment_index = 0
         while index < (len(time_dict_list)):
             if index + threshold < len(time_dict_list):
                 # If the start and end time of n words is within m seconds, add to the list of dictionaries
@@ -132,22 +133,35 @@ class CaptionPreprocessing:
                 if time_dict_list[index + threshold - 1]["start"] - time_dict_list[index]["end"] <= time:
                     # Get overarching caption for this time segment
                     caption = " ".join([dic["word"] for dic in time_dict_list[index: index + threshold]])
+                    caption = caption.encode('UTF-8', 'ignore')
                     fifteen_word_video_segment_captions = {
                         "caption": caption,
-                        "start": time_dict_list[index]["start"], 
-                        "end": time_dict_list[index + threshold - 1]["end"],
+                        "start": float(time_dict_list[index]["start"]),
+                        "end": float(time_dict_list[index + threshold - 1]["end"]),
                         "segment_word_list": time_dict_list[index: index + threshold],
-                        "video_filename_stem": str(pathlib.Path(self.video_path).stem),
+                        "video_filename_name": str(pathlib.Path(self.video_path).name),
                         "video_filepath": str(pathlib.Path(self.video_path)),
+                        "segment_index": segment_index
                         }
+                    segment_index += 1
                     curr_dict_list.append(fifteen_word_video_segment_captions)
                     index += threshold
                 else:
                     index += 1
             else:
                 break
+        # Add total_segments
+        num_segments = len(curr_dict_list)
+        for segment_dict in curr_dict_list:
+          segment_dict["total_segments"] = num_segments
+          for word_stamp in segment_dict["segment_word_list"]:
+            word_stamp["start"] = float(word_stamp["start"])
+            word_stamp["end"] = float(word_stamp["end"])
+            word_stamp["word"] = word_stamp["word"].encode(encoding = 'UTF-8', errors = 'ignore')
+
         # this is the list of words, with timestamps
         self.curr_dict_list = curr_dict_list
+
         
         # hopefully limit memory usage
         torch.cuda.empty_cache()
@@ -168,6 +182,7 @@ class CaptionPreprocessing:
             writer.write(json_object)
         return
 
+# Deprecated ?
     def filter_completed_whisper_paths(self, video_input_dir, empty_file_dir):
         video_input_dir = pathlib.Path(video_input_dir)
         # fp = str(os.path.join(video_input_dir.parent, video_input_dir.stem + '_whisper_output.jsonl'))
@@ -213,3 +228,6 @@ class CaptionPreprocessing:
         remaining_whisper_input = set(files) - set(existing_whisper_output)
         print("Number of remaining whisper input:", len(remaining_whisper_input))
         return list(remaining_whisper_input)
+
+    def get_all_caption_segments(self):
+      return self.curr_dict_list
