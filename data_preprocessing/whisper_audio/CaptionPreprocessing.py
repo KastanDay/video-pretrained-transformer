@@ -133,7 +133,7 @@ class CaptionPreprocessing:
                 if time_dict_list[index + threshold - 1]["start"] - time_dict_list[index]["end"] <= time:
                     # Get overarching caption for this time segment
                     caption = " ".join([dic["word"] for dic in time_dict_list[index: index + threshold]])
-                    caption = caption.encode('UTF-8', 'ignore')
+                    caption = caption.encode('utf-8', 'ignore').decode('utf-8','ignore')
                     fifteen_word_video_segment_captions = {
                         "caption": caption,
                         "start": float(time_dict_list[index]["start"]),
@@ -157,7 +157,7 @@ class CaptionPreprocessing:
           for word_stamp in segment_dict["segment_word_list"]:
             word_stamp["start"] = float(word_stamp["start"])
             word_stamp["end"] = float(word_stamp["end"])
-            word_stamp["word"] = word_stamp["word"].encode(encoding = 'UTF-8', errors = 'ignore')
+            word_stamp["word"] = word_stamp["word"].encode('utf-8', 'ignore').decode('utf-8','ignore')
 
         # this is the list of words, with timestamps
         self.curr_dict_list = curr_dict_list
