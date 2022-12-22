@@ -21,7 +21,6 @@ from termcolor import colored
 
 # for ray OOM errors: export RAY_DISABLE_MEMORY_MONITOR=1
 
-
 from deeplake_driver import DeeplakeManager
 from text_encoder import FlanT5Encoder
 
@@ -30,10 +29,10 @@ WHISPER_RESULTS_DATASET_PATH  = f'/mnt/storage_ssd/v2_text_encode_results_{BATCH
 INPUT_DATASET_PATH            = f'/mnt/storage_ssd/no_compression_whisper_results_{BATCH_NAME}'
 
 NUM_GPUS = 1
-NUM_THREADS = 6
-NUM_CPU_CORES = 6
+NUM_PARALLEL_PROCESSES = 14
+NUM_CPU_CORES = 12
 
-@ray.remote(concurrency_groups={"parallel_whisper_instances": 6}, num_cpus=6, num_gpus=1) 
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS) 
 class ParallelTextEncode:
   def __init__(self):
     
@@ -56,7 +55,7 @@ class ParallelTextEncode:
         last_hidden_states = last_hidden_states.reshape(-1, 1024)
         index_caption_dict = {'db_index': index_caption_dict['db_index'], 'caption': index_caption_dict['caption'], 'last_hidden_states': last_hidden_states}
         ## ADD TO DATASET (via upload queue)
-        print("🔥 About to add work to queue")
+        print(f"🔥 itr: {index_caption_dict['db_index']}. About to add work to queue")
         self.upload_queue.put(index_caption_dict)
         print("Added to Queue!")
       except Exception as e:
@@ -77,16 +76,17 @@ def main():
 
   index_caption_pairs = [] #list of: {'db_index': int, 'caption': str}
   # todo: check for completed segments (that already have a caption_embedding)
-  if False and os.path.exists(WHISPER_RESULTS_DATASET_PATH):
+  if os.path.exists(WHISPER_RESULTS_DATASET_PATH):
     ds = dl.load(WHISPER_RESULTS_DATASET_PATH)
+    print(ds.summary())
     for idx, sample in enumerate(ds):
-      # find 
-      try: 
+      try:
+        # if not done yet, add to processing queue index_caption_pairs 
         if sample.caption_embedding.numpy().shape == (0, 0):
           index_caption_pairs.append( {'db_index': idx, 'caption': sample.caption.data()['value']} )
       except IndexError as e:
         print(e)
-        # if there's an IndexError, then the caption_embedding is empty.
+        # if there's an IndexError, then the caption_embedding is empty. Caused by bug in compression code.
         index_caption_pairs.append( {'db_index': idx, 'caption': sample.caption.data()['value']} )
   else:
     # Create output database (none exists yet)
@@ -101,26 +101,23 @@ def main():
         index_caption_pairs.append( {'db_index': idx, 'caption': output_ds.caption[idx].data()['value']} )
     print(output_ds.summary())
   
-  from termcolor import colored
-  print(colored(f"👉 Starting {'hello'}", "cyan", attrs=["reverse", "bold"]))
-  print(colored(f"👉 Starting to encode these text-captions: {len(index_caption_pairs)}", "cyan", attrs=["reverse", "bold"]))
+  if len(index_caption_pairs) == 0:
+    print(colored(f"No new captions to encode. Exiting!", "green", attrs=["reverse", "bold"]))
+    exit()
+  else:
+    print(colored(f"👉 Starting to encode these text-captions: {len(index_caption_pairs)}", "cyan", attrs=["reverse", "bold"]))
   
-  # list of dicts, each dict is a {'db_index': int, 'caption': str}
-    
   # split files into batches
-  if NUM_THREADS == 1:
+  if NUM_PARALLEL_PROCESSES == 1:
     batches = [index_caption_pairs]
   else:
-    batches = list(more_itertools.divide(NUM_THREADS, index_caption_pairs))
+    batches = list(more_itertools.divide(NUM_PARALLEL_PROCESSES, index_caption_pairs))
   print("Num batches: ", len(batches))
-  assert len(batches) == (NUM_THREADS), "there is supposed to be one Ray thread per batch"
+  assert len(batches) == (NUM_PARALLEL_PROCESSES), "there is supposed to be one Ray thread per batch"
 
   print("Starting parallel batches")
   parallel_text_encode = ParallelTextEncode.remote()
-  all_result_futures = [parallel_text_encode.parallel_caption_extraction.remote(batch) for batch in batches]
-  
-  all_done = ray.get(all_result_futures)
-
+  all_done = ray.get([parallel_text_encode.parallel_caption_extraction.remote(batch) for batch in batches])
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
 

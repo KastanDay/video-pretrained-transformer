@@ -55,9 +55,9 @@ class DeeplakeManager():
           print("Queue size:", self.upload_queue.qsize())
           print("👉⬆️ STARTING AN ACTUAL UPLOAD... ⬆️👈")
           caption_embed_dict = self.upload_queue.get(block=True)
-            self.ds.caption_embedding[caption_embed_dict['db_index']] = caption_embed_dict['last_hidden_states']
-            print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
-            print(self.ds.summary())
+          self.ds.caption_embedding[caption_embed_dict['db_index']] = caption_embed_dict['last_hidden_states']
+          print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
+          print(self.ds.summary())
     except Exception as e:
       print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
       pprint.pprint(caption_embed_dict)

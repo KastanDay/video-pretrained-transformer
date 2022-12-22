@@ -1,8 +1,12 @@
 import torch
 import accelerate
-from transformers import T5Tokenizer, T5EncoderModel
+from transformers import T5Tokenizer, T5EncoderModel, logging
 import lovely_tensors as lt
 lt.monkey_patch()
+
+# suppress: Some weights of the model checkpoint at google/flan-t5-large were not used when initializing model.
+# This is expected because we're initializing the encoder-only. So the decoder weights are not used.
+logging.set_verbosity_error() 
 
 class FlanT5Encoder():
   def __init__(self):
