@@ -104,7 +104,6 @@ class ClipPreprocessor:
         local_frames = extract_frames_from_video(video_filepath, all_timestamps, use_multithreading=True)
         all_frames.extend(local_frames)
         
-
         print("type of local_frames", type(local_frames))
         # print(local_frames, "frames extracted from", video_filepath)
         print("local_frames.shape", local_frames.shape) # <batch_size>, 360, 202, 3. <batch_size> is 100 rn.
@@ -116,7 +115,7 @@ class ClipPreprocessor:
     print(f"⏰  Runtime of preprocessing: {(time.monotonic() - start_time):.2f} seconds")
     print("Running clip")
     all_pooled_clip_embeds = self.run_clip(all_frames)
-    return all_pooled_clip_embeds, all_timestamps, all_db_indexes
+    return all_frames, all_pooled_clip_embeds, all_timestamps, all_db_indexes
     
   def run_clip(self, frames):
     '''

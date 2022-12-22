@@ -23,12 +23,6 @@ REMOTE_WHISPER_FILE = f'{BASE_DIR}/{BATCH_NAME}_whisper_output.jsonl'
 REMOTE_CLIP_DIR     = f'{BASE_DIR}/{BATCH_NAME}_clip_output'
 REMOTE_SCENE_FILE   = f'{BASE_DIR}/{BATCH_NAME}_scene_output.jsonl'
 
-# Cockpit ML Debugger
-# https://cockpit.readthedocs.io/en/latest/examples/01_basic_fmnist.html
-from backpack import extend
-from cockpit import Cockpit, CockpitPlotter
-from cockpit.utils.configuration import configuration
-
 wandb.init(
     entity="kastan",
     project="VPT-custom-t5",

@@ -66,7 +66,8 @@ def parallel_clip(batch_of_100_samples):
             
             # TODO: WAIT WHY 202???? 
             # shape = 100 <i.e. batch_size>, 360, 202, 3
-            all_pooled_clip_embeds, all_timestamps, all_db_indexes = my_clip_preprocesser.run_clip_one_video(sample_dict)
+            # TODO: add FRAMES to our deeplake dataset, too. Need those frames.
+            all_frames, all_pooled_clip_embeds, all_timestamps, all_db_indexes = my_clip_preprocesser.run_clip_one_video(sample_dict)
             hidden_states = None
             dataset_future = add_to_dataset.remote(all_pooled_clip_embeds, all_timestamps, all_db_indexes)
             ray.get(dataset_future)
@@ -93,29 +94,31 @@ def parallel_clip(batch_of_100_samples):
     # print(f"⏰ Time to Whisper the file: {(time.monotonic() - start)/60:.2f} minutes\nVideo filesize: {os.path.getsize(file)/1e6:.2f} MB\n")
     start = time.monotonic()
 
+import traceback
 @ray.remote(num_cpus=1)
-def add_to_dataset(all_pooled_clip_embeds, all_timestamps, all_db_indexes):
+def add_to_dataset(all_frames, all_pooled_clip_embeds, all_timestamps, all_db_indexes):
   # todo: more to be done...
   ds = dl.load(WHISPER_RESULTS_DATASET_PATH)
   print("IN THE ADD_TO_DATASET")
-  
-  import traceback
   try:
     with ds:
       for pooled_clip_embedding, timestamp, db_index in zip(all_pooled_clip_embeds, all_timestamps, all_db_indexes):
         print("About to ADD TO DATASET BY INDEX >>>> 👇👇")
         ds.pooled_clip_embedding[db_index] = pooled_clip_embedding.reshape((768))
         ds.clip_hidden_states[db_index] = pooled_clip_embedding.reshape((768)) # todo: update
+        ds.all_frames[db_index] = all_frames
         
         metadata = ds.segment_metadata[db_index].data()['value']
         metadata['clip_embedding'] = True
         metadata['frame_timestamp_sec'] = timestamp
         ds.segment_metadata[db_index] = metadata
-    ds.flush()
-    print(ds.summary(), flush=True)
   except Exception as e:
     print(f"Error {e}")
     print(traceback.print_exc())
+  finally:
+    print(ds.summary(), flush=True)
+    ds.flush()
+    
       
 def main():
   """ MAIN """
@@ -123,20 +126,26 @@ def main():
   ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
   print_cluster_stats()
   
-  # just for testing
-  clip_outputs_ds = dl.load(WHISPER_RESULTS_DATASET_PATH)
-  # CLIP produces FP32 embeddings.
-  # todo: create tensor if doesn't exist yet.?
-  # print("⚠️ remote overwrite=True when creating tensors")
-  # clip_outputs_ds.create_tensor('pooled_clip_embedding', exist_ok=True, htype='image', dtype=np.float32, sample_compression='lz4')
-  # clip_outputs_ds.create_tensor('clip_hidden_states',    exist_ok=True, htype='image', dtype=np.float32, sample_compression='lz4')
+  # load dataset  
+  clip_outputs_ds = dl.load(WHISPER_RESULTS_DATASET_PATH) 
+  # create tensor if doesn't exist yet
+  if 'pooled_clip_embedding' not in clip_outputs_ds.tensors.keys():
+    # CLIP produces FP32 embeddings.
+    clip_outputs_ds.create_tensor('pooled_clip_embedding', exist_ok=True, htype='image', dtype=np.float32, sample_compression='lz4')
+  if 'clip_hidden_states' not in clip_outputs_ds.tensors.keys():
+    # CLIP produces FP32 embeddings.
+    clip_outputs_ds.create_tensor('clip_hidden_states',    exist_ok=True, htype='image', dtype=np.float32, sample_compression='lz4')
+  if 'frames' not in clip_outputs_ds.tensors.keys():
+    # Not sure of this dtype?? for PIL Image().fromarray()
+    clip_outputs_ds.create_tensor('frames',            exist_ok=True, htype='image', sample_compression='jpeg') # not sure of datatype
   print(clip_outputs_ds.summary(), flush=True)
   
   # fill with zeros, so we can index and populate it.
   with clip_outputs_ds:
     for _ in range(clip_outputs_ds.max_len):
-      clip_outputs_ds.pooled_clip_embedding.append(np.float16(-1))
-      clip_outputs_ds.clip_hidden_states.append(np.float16(-1))
+      clip_outputs_ds.pooled_clip_embedding.append(None) # np.float16(-1))
+      clip_outputs_ds.clip_hidden_states.append(None)  # np.float16(-1))
+      clip_outputs_ds.clip_hidden_states.append(None)
   clip_outputs_ds.flush()
   print(clip_outputs_ds.summary(), flush=True)
   
@@ -150,6 +159,8 @@ def main():
   batches_of_100_samples = []
   ds = dl.load(WHISPER_RESULTS_DATASET_PATH)
   
+  # TODO: Re-write the batching to just make one huge list, then use itertools to batch.
+  
   print("⚠️ Only using 100 samples for testing")
   ds = ds[:5]
   for idx in range(ds.max_len):
@@ -157,12 +168,12 @@ def main():
     # todo: if sample.pooled_clip_embedding.data()['value'] is not None:......
     
     sample = ds[idx]
-    seg_start_time = sample['segment_metadata'].data()['value']['start']
+    seg_start_time = sample['segment_metadata'].data(fetch_chunks=True)['value']['start']
     seg_end_time   = sample['segment_metadata'].data()['value']['end']
     midpoint = (seg_end_time + seg_start_time) / 2
     
     # add to dict {'<filepath>': [<frame_timestamp>, ...]}
-    video_filepath = sample['video_filepath'].data()['value']
+    video_filepath = sample['video_filepath'].data(fetch_chunks=True)['value']
     if video_filepath not in hundred_samples.keys():
       hundred_samples[video_filepath] = []
     hundred_samples[video_filepath].append( {'timestamp': midpoint, 'db_index': idx} )
