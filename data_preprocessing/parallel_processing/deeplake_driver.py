@@ -66,7 +66,6 @@ class DeeplakeManager():
       with self.ds:
         while self.upload_queue.qsize() > 0:
           print("Queue size:", self.upload_queue.qsize())
-          print("👉⬆️ STARTING AN ACTUAL UPLOAD... ⬆️👈")
           results = self.upload_queue.get(block=True)
           # loop over one segment at a time
           for all_frames, last_hidden_states, all_pooled_clip_embeds, timestamp, db_index in zip(results['frames'], results['last_hidden_states'], results['pooled_clip_embeds'], results['timestamps'], results['db_indexes']):
@@ -78,8 +77,9 @@ class DeeplakeManager():
             metadata['clip_embedding'] = True
             metadata['frame_timestamp_sec'] = timestamp
             self.ds.segment_metadata[db_index] = metadata
-          print("✅ SUCCESSFULLY uploaded a batch of segments to Deeplake! ✅")
-          print(self.ds.summary())
+        print("✅ SUCCESSFULLY uploaded a batch of segments to Deeplake! ✅")
+        print(self.ds.summary())
+        print("Queue size (should be zero):", self.upload_queue.qsize())
         self.ds.flush()
     except Exception as e:
       print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")

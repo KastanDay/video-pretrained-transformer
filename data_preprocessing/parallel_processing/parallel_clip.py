@@ -37,38 +37,45 @@ RESULTS_DATASET_PATH    = f'/mnt/storage_ssd/clip_DUMMY_results_{BATCH_NAME}'
 # NUM_GPUS = 4          # Number of physical GPUs to use (use max)
 # GPU_PER_PROCESS = 1/5 # threads per GPU, limited by OOM errors while also maximizing spread. 
 
-NUM_PARALLEL_PROCESSES = 2      # Number of parallel processes (limited by DRAM and SRAM)
+NUM_PARALLEL_PROCESSES = 3      # Number of parallel processes (limited by DRAM and SRAM)
 NUM_CPU_CORES = 12    # Numer of available physical cores to use (use max!)
 NUM_GPUS = 1          # Number of physical GPUs to use (use max)
 GPU_PER_PROCESS = 1 # threads per GPU, limited by OOM errors while also maximizing spread. 
-BATCH_SIZE = 30 # 30 * 2 threads. good on 11GB
+BATCH_SIZE = 22 # 30 * 2 threads. good on 11GB
 
-@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS) 
+# rough GPU-mem per image is 22*3 / 11 = 6 images per gig.
+
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=NUM_CPU_CORES/NUM_PARALLEL_PROCESSES, num_gpus=NUM_GPUS/NUM_PARALLEL_PROCESSES) 
 class ParallelEncode:
-  def __init__(self):
+  def __init__(self, all_clip_batches=None):
     
     # Every parallel_caption_extraction writes to this queue. Then the uploader pulls from it. Magic.
     self.upload_queue = Queue()
     self.db_manager = DeeplakeManager.remote(preprocessor_type='clip', database_path=RESULTS_DATASET_PATH, upload_queue=self.upload_queue)
     
+    self.clip_batches_to_do = Queue()
+    for batch in all_clip_batches:
+      self.clip_batches_to_do.put(batch)
+    
   @ray.method(concurrency_group="parallel_whisper_instances")  # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
-  def parallel_clip_encode(self, batch):
+  def parallel_clip_encode(self):
     '''
     Main function for parallel clip. 
     '''
     start = time.monotonic()
-    process = ClipEncoder(debug=True)
-    try:
-      results_dict = process.run_clip_one_batch(batch)
-      upload = time.monotonic()
-      self.upload_queue.put(results_dict)
-      print(f"⏰ Time to add to upoad queue: {(time.monotonic() - upload):.2f} seconds")
-    except Exception as e:
-      print(f"❌❌ Error during {inspect.currentframe().f_code.co_name}: {e}")
-      traceback.print_exc()
+    process = ClipEncoder(debug=False)
+    while self.clip_batches_to_do.qsize() > 0:
+      batch = self.clip_batches_to_do.get(block=True)
+      try:
+        results_dict = process.run_clip_one_batch(batch)
+        self.upload_queue.put(results_dict) # nearly instant, v fast 🏎💨
+      except Exception as e:
+        print(f"❌❌ Error during {inspect.currentframe().f_code.co_name}: {e}")
+        traceback.print_exc()
 
-    print(f"⏰ Time to clip-encode 100 segments: {(time.monotonic() - start)/60:.2f} minutes")
-    start = time.monotonic()
+      print(f"⏰ OVERALL TIME: clip-encoded {BATCH_SIZE} segments in {(time.monotonic() - start)/60:.2f} minutes. (time/frame = {((time.monotonic() - start)/BATCH_SIZE):.2f} sec)")
+      start = time.monotonic()
+    print(f"Worker done in {inspect.currentframe().f_code.co_name} (work queue empty), exiting! 😎")
       
 def main():
   """ MAIN """
@@ -78,10 +85,7 @@ def main():
   if False and os.path.exists(RESULTS_DATASET_PATH):
     print(f"Loading existing dataset from {RESULTS_DATASET_PATH}")
     ds = dl.load(RESULTS_DATASET_PATH) 
-    # TODO: REMEMMBER TO CHANGE THIS BACK
-    print(colored(f"⚠️ WARNING need to turn filtering back on", "yellow", attrs=["reverse", "bold"]))
-    # batches_of_100_segments = add_samples_to_dict(ds, do_filtering=True)
-    batches_of_100_segments = add_samples_to_dict(ds, do_filtering=False)
+    segment_batch_list = add_samples_to_dict(ds, do_filtering=True)
   else:
     # create dataset  
     print(f"Creating new dataset at {RESULTS_DATASET_PATH}")
@@ -101,14 +105,13 @@ def main():
     ds.flush()
     print(ds.summary(), flush=True)
     # create batches
-    batches_of_100_segments = add_samples_to_dict(ds, do_filtering=False)
+    segment_batch_list = add_samples_to_dict(ds, do_filtering=False)
   
-  # print("⚠️ Only using 100 samples for testing")
-  # ds = ds[:5]
-  print("Num batches of 100 segments: ", len(batches_of_100_segments))
+  print("Num batches: ", len(segment_batch_list))
   print("Starting parallel batches")
-  parallel_encode = ParallelEncode.remote()
-  all_done = ray.get([parallel_encode.parallel_clip_encode.remote(batch) for batch in batches_of_100_segments])
+  parallel_encode = ParallelEncode.remote(all_clip_batches=segment_batch_list)
+  # only launch set number of workers, they all pull from the same work queue.
+  all_done = ray.get([parallel_encode.parallel_clip_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)])
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
 
@@ -152,7 +155,6 @@ def add_samples_to_dict(ds, do_filtering):
   batch = {}
   list_of_batches = []
   total_samples = 0
-  
   for idx, sample in enumerate(ds):
     # filter completed CLIP results.
     if do_filtering:
@@ -170,6 +172,7 @@ def add_samples_to_dict(ds, do_filtering):
   
   print(f"⏰ Time to filter completed results: {(time.monotonic() - start_time):.2f} seconds")
   assert len(list_of_batches) != 0 and batch == {}, "Error: list_of_batches is empty. nothing to process..."
+  print(colored(f"✅ Already processed {ds.max_len - total_samples}", "green", attrs=["reverse", "bold"]))
   print(colored(f"👉 Total CLIP segments to process {total_samples}", "cyan", attrs=["reverse", "bold"]))
   return list_of_batches
 

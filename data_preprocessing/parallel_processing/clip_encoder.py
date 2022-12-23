@@ -13,9 +13,10 @@ import torch
 import lovely_tensors as lt
 lt.monkey_patch()
 
-import skvideo.io
-import imageio.v3 as iio
-import av
+# import skvideo.io
+# import imageio.v3 as iio
+# import av 
+from decord import VideoReader, cpu  # best random-access video reader all the lands.
 from termcolor import colored
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
@@ -31,7 +32,7 @@ FRAME_SIZE_DIMENSION = 336
 NUM_FRAMES_TO_SAVE_PER_SEGMENT = 1
 
 class ClipEncoder: 
-  def __init__(self, debug=True, num_frames_per_segment=1):
+  def __init__(self, debug=False, num_frames_per_segment=1):
     self.debug = debug
     self.num_frames_per_segment = num_frames_per_segment
     
@@ -65,17 +66,14 @@ class ClipEncoder:
         curr_timestamps = [segment_dict['timestamp'] for segment_dict in time_and_db_index_list]
         local_frames = extract_frames_from_video(video_filepath, curr_timestamps, use_multithreading=True)
         if not (None in local_frames):
-            print(f"len(local_frames) is {len(local_frames)}")
             all_timestamps.extend([segment_dict['timestamp'] for segment_dict in time_and_db_index_list])
             all_db_indexes.extend([segment_dict['db_index'] for segment_dict in time_and_db_index_list])
             all_frames.extend(local_frames)
         else:
             print(f"🚨🚨 Warning (can happen occasionally): failed to extract frames for video {video_filepath}")
             print(f"len(local_frames) is {len(local_frames)}")
-    # resize frames (from roughly 360p --> clip dimensions). Might not be 360p if black bars detected.
-    # print("BEFORE CLIP -- type of all_frames", type(all_frames))
-    # print("BEFORE CLIP -- len(all_frames)", len(all_frames)) # <batch_size>, 360, 202, 3. <batch_size> is 100 rn.
-    # print("BEFORE CLIP -- all_frames[0].shape", all_frames[0].shape)
+
+    # RUN CLIP
     all_pooled_clip_embeds, last_hidden_states = self.run_clip(all_frames)
     
     results_dict = {
@@ -95,38 +93,26 @@ class ClipEncoder:
     start_time = time.monotonic()
     # optional improvement: send in a list of images instead. Just worried about convert_RGB in that case...
     image_inputs = self.clip_preprocess(images=all_frames, return_tensors="pt").to(self.device)
-    print(f"⏰  Runtime of preprocessing: {(time.monotonic() - start_time):.2f} seconds")
     
-    # TODO: Not tested yet.
-    # image_input = torch.tensor(np.stack(all_frames)).to(self.device)
-    # if self.debug:
-    #     print("Shape after stacking frames in run_clip()")
-    #     print(image_input.shape)
-    #     print(image_input)
-
-    print("RIGHT before running clip 📸")
+    if self.debug:    
+        print(f"⏰  Runtime of preprocessing: {(time.monotonic() - start_time):.2f} seconds")
+        print("RIGHT before running clip 📸")
     start_time = time.monotonic()
     with torch.inference_mode(): # even faster than no_grad()
-        # image_features = self.clip.encode_image(image_input)
         outputs = self.clip(**image_inputs, output_hidden_states=True, return_dict=True)
         all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy() # (batch_size, hidden_size). FloatTensor
         last_hidden_states = outputs['last_hidden_state'].cpu().numpy() # (batch_size, sequence_length, hidden_size). FloatTensor
-        
-        # image_features = image_features.cpu().numpy().reshape(len(all_frames), self.num_frames_per_segment, -1) # -1 == 3.
-        # text_features = self.clip.encode_text(text_inputs)
-        # text_features = text_features.cpu().numpy()
-    print(f"⏰ CLIP Runtime on {len(all_frames)*self.num_frames_per_segment} images: {(time.monotonic() - start_time):.2f} seconds")
     if self.debug:
+        print(f"⏰ CLIP Runtime on {len(all_frames)*self.num_frames_per_segment} images: {(time.monotonic() - start_time):.2f} seconds")
         print("Clip all_pooled_clip_embeds.shape:")
         print(all_pooled_clip_embeds.shape)
         print("Clip last_hidden_states.shape:")
         print(last_hidden_states.shape)
-        print(colored(f"👉 TODO: reshape these so there's no extra space.", "orange", attrs=["reverse", "bold"]))
 
     return all_pooled_clip_embeds, last_hidden_states
 
 '''
-VIDEO PROCESSING FROM MERLOT RESERVE
+VIDEO PROCESSING ADAPTED FROM MERLOT RESERVE
 https://github.com/rowanz/merlot_reserve/blob/main/mreserve/preprocess.py
 '''
 def extract_frames_from_video(video_file, times, use_multithreading=False, blackbar_threshold=32, max_perc_to_trim=.20):
@@ -140,10 +126,21 @@ def extract_frames_from_video(video_file, times, use_multithreading=False, black
   :param max_perc_to_trim: Will trim 20% by default of the image at most in each dimension
   :return: Frames that are trimmed to not have any black bars
   """
-  print("In extract frames from video")
-  
-  container = av.open(video_file)
-  video_framerate = container.streams.video[0].average_rate
+  # I had terrible problems with num_threads > 1.. no idea why, no progress on GH issues: https://github.com/dmlc/decord/issues/124
+  start_time = time.monotonic()
+  vr = VideoReader(str(video_file), ctx=cpu(0), num_threads=1)
+  fps = vr.get_avg_fps()
+  # timestamp in seconds -> frame_index
+  frame_indexes = []
+  for t in times:
+    frame_indexes.append(int(t * fps))
+  frames = vr.get_batch(frame_indexes).asnumpy()
+  # print(f"⏰ Time to get {len(frame_indexes)} frames: {(time.monotonic() - start_time):.2f} seconds (time/frame = {((time.monotonic() - start_time)/len(frame_indexes)):.2f} sec)")
+  y1, y2, x1, x2 = _detect_black_bars_from_video(frames, blackbar_threshold=blackbar_threshold,
+                                                  max_perc_to_trim=max_perc_to_trim)
+  return frames[:, y1:y2, x1:x2]
+
+  # Original method. Over-complicated ANDDD slower. Fuck ffmpeg.
   
   def _extract(i):
     #   return i, extract_single_frame_from_video(video_file, times[i]) # todo: pass in video framerate.. for use in imageio.v3
