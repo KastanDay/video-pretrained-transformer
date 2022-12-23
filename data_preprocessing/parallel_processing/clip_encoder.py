@@ -1,150 +1,129 @@
-import os 
-import json
-import cv2
+import os
 import numpy as np
-import clip
-import torch
-from PIL import Image
 import pathlib
-from pathlib import Path
-import glob
-import argparse
-import jsonlines
-import json
 import time
+import inspect
+import cv2
+from PIL import Image
 import concurrent.futures
+
+# import clip
+from transformers import CLIPProcessor, CLIPVisionModel, logging
+import torch
+import lovely_tensors as lt
+lt.monkey_patch()
+
 import skvideo.io
 import imageio.v3 as iio
 import av
-import lovely_tensors as lt
-lt.monkey_patch()
+from termcolor import colored
 
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3' # just for testing.
 
-
-'''
-⭐️ How to read the CLIP outputs ⭐️
-
-itterate over arr_0 thru total_segments
-
-path = '/scratch/bbki/kastanday/whisper/parallel_15_clip_output/LdMD528r6Xs_Jon\'s Daily Hustle_802_Lawn Care Equipment Setup Plans For 2021 - Upgrading Lawn Mowers.npz'
-np_loaded = np.load(path, allow_pickle=True)
-print(np_loaded)
-np_loaded['arr_0'].item() # iterate here until `not .next()`
-
-Docs: https://numpy.org/doc/stable/reference/generated/numpy.savez_compressed.html#numpy.savez_compressed
-'''
-
-'''
-⭐️ How to read the CLIP outputs ⭐️
-
-itterate over arr_0 thru total_segments
-
-path = '/scratch/bbki/kastanday/whisper/parallel_15_clip_output/LdMD528r6Xs_Jon\'s Daily Hustle_802_Lawn Care Equipment Setup Plans For 2021 - Upgrading Lawn Mowers.npz'
-np_loaded = np.load(path, allow_pickle=True)
-print(np_loaded)
-np_loaded['arr_0'].item() # iterate here until `not .next()`
-
-Docs: https://numpy.org/doc/stable/reference/generated/numpy.savez_compressed.html#numpy.savez_compressed
-'''
-
-
-'''
-INSTALL INSTRUCTIONS (STRICT dependencies, mostly due to Ray.):
-conda create -n v3_clip_preprocessing_yt1b python=3.8.13 -y
-conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia -y
-pip install pandas "ray[default]==1.13.0" more_itertools jsonlines pyarrow fastparquet pandas parquet ftfy regex tqdm git+https://github.com/openai/CLIP.git
-conda install -c conda-forge -y git-lfs
-cd into the git repo and run `git lfs install` and `git lfs pull`
-(optional) pip install pretty_errors
-'''
+# suppress: Some weights of the model checkpoint at google/flan-t5-large were not used when initializing model.
+# This is expected because we're initializing the encoder-only. So the decoder weights are not used.
+logging.set_verbosity_error() 
 
 ### GLOBALS SET ME 😁 ### 
-MODEL_SIZE = 'ViT-L/14@336px'  # Best models are (1st) ViT-L/14@336px and (2nd) ViT-L/14. I don't recommend going lower.  
+MODEL_SIZE = 'openai/clip-vit-large-patch14-336'  # Best models are (1st) ViT-L/14@336px and (2nd) ViT-L/14. I don't recommend going lower.  
 FRAME_SIZE_DIMENSION = 336
 NUM_FRAMES_TO_SAVE_PER_SEGMENT = 1
 
-class ClipPreprocessor: 
+class ClipEncoder: 
   def __init__(self, debug=True, num_frames_per_segment=1):
     self.debug = debug
     self.num_frames_per_segment = num_frames_per_segment
     
     # Load the model
-    # self.device = "cuda" if torch.cuda.is_available() else "cpu"
-    print("Delete CPU only code in clip_preprocessing.py")
-    self.device = "cpu"
+    self.device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using {self.device}...")
+    
+    self.clip = CLIPVisionModel.from_pretrained(MODEL_SIZE).to(self.device)
+    self.clip_preprocess = CLIPProcessor.from_pretrained(MODEL_SIZE)
 
-    self.clip, self.clip_preprocess = clip.load(MODEL_SIZE, self.device)
+    # self.clip, self.clip_preprocess = clip.load(MODEL_SIZE, self.device)
     if '336' in MODEL_SIZE:
         assert FRAME_SIZE_DIMENSION >= 336, "Frame size must be at least 336px (by 336) for ViT-L/14@336px"
     
     if self.debug:
         print(f"Done setting up CLIP...")
         
-  def run_clip_one_video(self, sample_dict):
-    # sample dict format. It's always 100 segments!
-    # sample_dict = {
-    # '<full_video_filepath>': {'timestamp': midpoint, 'db_index': idx},   # list of timestamp midpoints (1 per frame)
-    # '<full_video_filepath_2>': {'timestamp': midpoint, 'db_index': idx}, # list of timestamp midpoints (1 per frame)
-    # }
-    
+  def run_clip_one_batch(self, batch_of_100_samples):
+    '''
+    batch_of_100_samples format. It's always 100 segments!
+    batch_of_100_samples = {
+    '<full_video_filepath>':  [ {'timestamp': midpoint, 'db_index': idx} ],   # list of [times & midpoints] (1 per frame)
+    '<full_video_filepath_2>':[ {'timestamp': midpoint, 'db_index': idx} ],  
+    }
+    '''
     all_frames = []
     all_timestamps = []
     all_db_indexes = []
-    print("getting frames")
-    for video_filepath, time_and_db_index in sample_dict.items():
-        print("video_filepath", video_filepath)
-        print("dict", time_and_db_index)
-
-        # todo: use multithreading (True)
-        all_timestamps.extend([segment_dict['timestamp'] for segment_dict in time_and_db_index])
-        all_db_indexes.extend([segment_dict['db_index'] for segment_dict in time_and_db_index])
-        local_frames = extract_frames_from_video(video_filepath, all_timestamps, use_multithreading=True)
-        all_frames.extend(local_frames)
-        
-        print("type of local_frames", type(local_frames))
-        # print(local_frames, "frames extracted from", video_filepath)
-        print("local_frames.shape", local_frames.shape) # <batch_size>, 360, 202, 3. <batch_size> is 100 rn.
-        print("local_frames[0].shape", local_frames[0].shape)
-        
+    for video_filepath, time_and_db_index_list in batch_of_100_samples.items():
+        # can return None if any frame failes to extract from video...
+        curr_timestamps = [segment_dict['timestamp'] for segment_dict in time_and_db_index_list]
+        local_frames = extract_frames_from_video(video_filepath, curr_timestamps, use_multithreading=True)
+        if not (None in local_frames):
+            print(f"len(local_frames) is {len(local_frames)}")
+            all_timestamps.extend([segment_dict['timestamp'] for segment_dict in time_and_db_index_list])
+            all_db_indexes.extend([segment_dict['db_index'] for segment_dict in time_and_db_index_list])
+            all_frames.extend(local_frames)
+        else:
+            print(f"🚨🚨 Warning (can happen occasionally): failed to extract frames for video {video_filepath}")
+            print(f"len(local_frames) is {len(local_frames)}")
     # resize frames (from roughly 360p --> clip dimensions). Might not be 360p if black bars detected.
-    start_time = time.monotonic()
-    all_frames = [self.clip_preprocess(Image.fromarray(frame).convert("RGB")) for frame in all_frames]
-    print(f"⏰  Runtime of preprocessing: {(time.monotonic() - start_time):.2f} seconds")
-    print("Running clip")
-    all_pooled_clip_embeds = self.run_clip(all_frames)
-    return all_frames, all_pooled_clip_embeds, all_timestamps, all_db_indexes
+    # print("BEFORE CLIP -- type of all_frames", type(all_frames))
+    # print("BEFORE CLIP -- len(all_frames)", len(all_frames)) # <batch_size>, 360, 202, 3. <batch_size> is 100 rn.
+    # print("BEFORE CLIP -- all_frames[0].shape", all_frames[0].shape)
+    all_pooled_clip_embeds, last_hidden_states = self.run_clip(all_frames)
     
-  def run_clip(self, frames):
+    results_dict = {
+        'frames': all_frames,
+        'last_hidden_states': last_hidden_states,
+        'pooled_clip_embeds': all_pooled_clip_embeds,
+        'timestamps': all_timestamps,
+        'db_indexes': all_db_indexes,
+    }
+    return results_dict
+    
+  def run_clip(self, all_frames):
     '''
     :param frames: list of np.ndarrays
     :returns: np.ndarrays
     '''
+    start_time = time.monotonic()
+    # optional improvement: send in a list of images instead. Just worried about convert_RGB in that case...
+    image_inputs = self.clip_preprocess(images=all_frames, return_tensors="pt").to(self.device)
+    print(f"⏰  Runtime of preprocessing: {(time.monotonic() - start_time):.2f} seconds")
+    
     # TODO: Not tested yet.
-    image_input = torch.tensor(np.stack(frames)).to(self.device)
-    if self.debug:
-        print("Shape after stacking frames in run_clip()")
-        print(image_input.shape)
-        print(image_input)
-
-    # text_inputs = torch.cat(text_inputs).to(self.device)
+    # image_input = torch.tensor(np.stack(all_frames)).to(self.device)
+    # if self.debug:
+    #     print("Shape after stacking frames in run_clip()")
+    #     print(image_input.shape)
+    #     print(image_input)
 
     print("RIGHT before running clip 📸")
     start_time = time.monotonic()
     with torch.inference_mode(): # even faster than no_grad()
-        image_features = self.clip.encode_image(image_input)
-        image_features = image_features.cpu().numpy().reshape(len(frames), self.num_frames_per_segment, -1) # -1 == 3.
+        # image_features = self.clip.encode_image(image_input)
+        outputs = self.clip(**image_inputs, output_hidden_states=True, return_dict=True)
+        all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy() # (batch_size, hidden_size). FloatTensor
+        last_hidden_states = outputs['last_hidden_state'].cpu().numpy() # (batch_size, sequence_length, hidden_size). FloatTensor
+        
+        # image_features = image_features.cpu().numpy().reshape(len(all_frames), self.num_frames_per_segment, -1) # -1 == 3.
         # text_features = self.clip.encode_text(text_inputs)
         # text_features = text_features.cpu().numpy()
-    print(f"⏰ CLIP Runtime on {len(frames)*self.num_frames_per_segment} images: {(time.monotonic() - start_time):.2f} seconds")
+    print(f"⏰ CLIP Runtime on {len(all_frames)*self.num_frames_per_segment} images: {(time.monotonic() - start_time):.2f} seconds")
     if self.debug:
-        print("Clip features:")
-        print(image_features.shape)
-        # print(image_features) 
+        print("Clip all_pooled_clip_embeds.shape:")
+        print(all_pooled_clip_embeds.shape)
+        print("Clip last_hidden_states.shape:")
+        print(last_hidden_states.shape)
+        print(colored(f"👉 TODO: reshape these so there's no extra space.", "orange", attrs=["reverse", "bold"]))
 
-    return image_features # , text_features
+    return all_pooled_clip_embeds, last_hidden_states
 
 '''
 VIDEO PROCESSING FROM MERLOT RESERVE
@@ -166,7 +145,6 @@ def extract_frames_from_video(video_file, times, use_multithreading=False, black
   container = av.open(video_file)
   video_framerate = container.streams.video[0].average_rate
   
-  
   def _extract(i):
     #   return i, extract_single_frame_from_video(video_file, times[i]) # todo: pass in video framerate.. for use in imageio.v3
       return i, kas_extract_single_frame_from_video(video_file, times[i], video_framerate) # todo: pass in video framerate.. for use in imageio.v3
@@ -175,22 +153,24 @@ def extract_frames_from_video(video_file, times, use_multithreading=False, black
       frames = [_extract(i)[1] for i in range(len(times))]
   else:
       frames = [None for t in times]
-      with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+      with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
           submitted_threads = (executor.submit(_extract, i) for i in range(len(times)))
           for future in concurrent.futures.as_completed(submitted_threads):
               try:
                   i, img = future.result()
                   frames[i] = img
               except Exception as exc:
-                  print("Oh no {}".format(str(exc)), flush=True)
+                  print("❌❌❌❌ Oh no. Failed to extract frame using multithreading {}".format(str(exc)), flush=True)
 
+  # If any frames fail, fail the WHOLE video... lame?
   if any([x is None for x in frames]):
-      print(f"Fail on {video_file}", flush=True)
+      print(f"❌❌❌❌ Fail on {video_file}", flush=True)
+      print(colored(f"❌ Fail extracing frames on {video_file}, in function {inspect.currentframe().f_code.co_name}", "red", attrs=["reverse", "bold"]), flush=True)
       return None
 
   frames = np.stack(frames)
-#   y1, y2, x1, x2 = _detect_black_bars_from_video(frames, blackbar_threshold=blackbar_threshold,
-#                                                   max_perc_to_trim=max_perc_to_trim)
+  y1, y2, x1, x2 = _detect_black_bars_from_video(frames, blackbar_threshold=blackbar_threshold,
+                                                  max_perc_to_trim=max_perc_to_trim)
   
   return frames
   print("Right before returning frames")
@@ -231,7 +211,7 @@ def kas_extract_single_frame_from_video(video_file, timestamp_sec, video_fps):
         index=frame_number,
         plugin="pyav",
     )
-    print(f"⏰ 1 frame extracted runtime: {(time.monotonic() - start_time):.3f} seconds")
+    print(f"⏰ Time to extract 1 frame: {(time.monotonic() - start_time):.2f} seconds")
     return frame
     
 def DEPRICATED_extract_single_frame_from_video(video_file, t):

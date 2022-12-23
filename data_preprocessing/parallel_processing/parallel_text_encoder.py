@@ -33,15 +33,15 @@ NUM_PARALLEL_PROCESSES = 14
 NUM_CPU_CORES = 12
 
 @ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS) 
-class ParallelTextEncode:
+class ParallelEncode:
   def __init__(self):
     
     # Every parallel_caption_extraction writes to this queue. Then the uploader pulls from it. Magic.
     self.upload_queue = Queue()
-    self.db_manager = DeeplakeManager.remote(database_path=WHISPER_RESULTS_DATASET_PATH, upload_queue=self.upload_queue)
+    self.db_manager = DeeplakeManager.remote(preprocessor_type='text-encode', database_path=WHISPER_RESULTS_DATASET_PATH, upload_queue=self.upload_queue)
     
   @ray.method(concurrency_group="parallel_whisper_instances")  # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
-  def parallel_caption_extraction(self, text_batch):
+  def parallel_text_encode(self, text_batch):
     '''
     Main function for parallel whisper. 
     '''
@@ -116,8 +116,8 @@ def main():
   assert len(batches) == (NUM_PARALLEL_PROCESSES), "there is supposed to be one Ray thread per batch"
 
   print("Starting parallel batches")
-  parallel_text_encode = ParallelTextEncode.remote()
-  all_done = ray.get([parallel_text_encode.parallel_caption_extraction.remote(batch) for batch in batches])
+  parallel_encode = ParallelEncode.remote()
+  all_done = ray.get([parallel_encode.parallel_text_encode.remote(batch) for batch in batches])
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
 

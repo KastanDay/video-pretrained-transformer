@@ -8,11 +8,13 @@ import deeplake as dl
 import ray
 from ray.util.queue import Queue
 import asyncio
-
+import inspect
 
 @ray.remote(concurrency_groups={"upload_driver": 1, "single_thread_io": 1, "parallel_ingest": 4})
 class DeeplakeManager():
-  def __init__(self, database_path=None, upload_queue=None):
+  def __init__(self, preprocessor_type=None, database_path=None, upload_queue=None):
+    assert preprocessor_type in ['whisper', 'clip', 'text-encode'], "only these modes are supported. Due to custom upload function for each."
+    
     ray.init('auto', ignore_reinit_error=True) # todo: connect to existing ray cluster...
     
     # open and persist DB connection
@@ -22,29 +24,71 @@ class DeeplakeManager():
     self.upload_queue = upload_queue
     
     # runs forever in background
-    ray.get(self._start_whisper_upload_driver())
-  
-  @ray.method(concurrency_group="parallel_ingest") 
-  def whisper_results_to_deeplake(self, whisper_one_video_results):
-    '''
-    Users call this function to upload data to Deeplake database. Upload is done in background.
-    param: whisper_one_video_results: list of dicts, each dict is a segment
-    '''
-    print("👉 adding to upload queue...")
-    # self.whisper_results_upload_queue.put(whisper_one_video_results)
-    pass
+    ray.get(self._start_upload_driver(preprocessor_type))
   
   ############################
   ##### INTERNAL METHODS #####
   ############################
   @ray.method(concurrency_group="upload_driver") 
-  def _start_whisper_upload_driver(self):
+  def _start_upload_driver(self, preprocessor_type):
+    '''
+    The __init__() calls this function to upload data to Deeplake database. Upload is done in background.
+    '''
     print("Started the forever upload driver...")
-    while True: # continuously check upload queue
-      # self._whisper_results_to_deeplake()  # todo: <-- this is good for Whisper
-      # todo: figure out how to call the right function per pre-processor
-      self._text_encode_results_to_deeplake()
-      time.sleep(3) # wait before checking again
+    assert preprocessor_type in ['whisper', 'clip', 'text-encode'], "only these modes are supported. Due to custom upload function for each."
+    if preprocessor_type == 'whisper':
+      while True: # continuously check upload queue
+        self._whisper_results_to_deeplake()
+        time.sleep(3) # wait before checking again
+    elif preprocessor_type == 'clip':
+      while True: 
+        self._clip_encode_results_to_deeplake()
+        time.sleep(3)
+    elif preprocessor_type == 'text-encode':
+      while True: # continuously check upload queue
+        self._text_encode_results_to_deeplake()
+        time.sleep(3)
+  
+  @ray.method(concurrency_group="single_thread_io")
+  def _clip_encode_results_to_deeplake(self):
+    '''
+    shape of results dict:
+    Each value is a list of equal length, everything is length 100 for GPU-memory reasons.
+    results = {
+        'frames': all_frames,
+        'last_hidden_states': last_hidden_states,
+        'pooled_clip_embeds': all_pooled_clip_embeds,
+        'timestamps': all_timestamps,
+        'db_indexes': all_db_indexes,
+    }
+    '''
+    try:
+      with self.ds:
+        while self.upload_queue.qsize() > 0:
+          print("Queue size:", self.upload_queue.qsize())
+          print("👉⬆️ STARTING AN ACTUAL UPLOAD... ⬆️👈")
+          results = self.upload_queue.get(block=True)
+          # loop over one segment at a time
+          for all_frames, last_hidden_states, all_pooled_clip_embeds, timestamp, db_index in zip(results['frames'], results['last_hidden_states'], results['pooled_clip_embeds'], results['timestamps'], results['db_indexes']):
+            self.ds.clip_pooled_embedding[db_index] = all_pooled_clip_embeds
+            self.ds.clip_last_hidden_states[db_index] = last_hidden_states
+            self.ds.frames[db_index] = all_frames
+            # update metadata
+            metadata = self.ds.segment_metadata[db_index].data()['value']
+            metadata['clip_embedding'] = True
+            metadata['frame_timestamp_sec'] = timestamp
+            self.ds.segment_metadata[db_index] = metadata
+          print("✅ SUCCESSFULLY uploaded a batch of segments to Deeplake! ✅")
+          print(self.ds.summary())
+        self.ds.flush()
+    except Exception as e:
+      print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
+      pprint.pprint(results)
+      print("^^^ FULL clip-embed RESULTS ^^^")
+      print(f"Error occurred at index: 👉 {db_index} 👈")
+      print(f"Error in {inspect.currentframe().f_code.co_name}: {e}")
+      print(traceback.print_exc())
+      print("Testing getting the name of the curr function: ", print(inspect.currentframe().f_code.co_name))
   
   @ray.method(concurrency_group="single_thread_io")
   def _text_encode_results_to_deeplake(self):
@@ -62,14 +106,16 @@ class DeeplakeManager():
       print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
       pprint.pprint(caption_embed_dict)
       print("^^^ FULL text-embed RESULTS ^^^")
-      print(f"Error in _text_encode_results_to_deeplake(). Error: {e}")
+      print(f"Error in {inspect.currentframe().f_code.co_name}: {e}")
       print(f"Data being added during error:")
       pprint.pprint(caption_embed_dict)
       print(traceback.print_exc())
   
   @ray.method(concurrency_group="single_thread_io")
   def _whisper_results_to_deeplake(self):
-    print("👀 checking for things to upload...")
+    '''
+    param: whisper_one_video_results: list of dicts, each dict is a segment
+    '''
     try:
         while self.upload_queue.qsize() > 0:
           whisper_one_video_results = self.upload_queue.get(block=True)
@@ -95,7 +141,7 @@ class DeeplakeManager():
       print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
       pprint.pprint(whisper_one_video_results)
       print("^^^ FULL WHISPER RESULTS ^^^")
-      print(f"Error in add_to_dataset, with file {segment['video_filepath']}. Error: {e}")
+      print(f"Error in {inspect.currentframe().f_code.co_name}:, with file {segment['video_filepath']}. Error: {e}")
       print(f"Data being added during error:")
       pprint.pprint(segment)
       print(traceback.print_exc())
