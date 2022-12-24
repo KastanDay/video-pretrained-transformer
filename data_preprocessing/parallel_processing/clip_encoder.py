@@ -126,8 +126,7 @@ def extract_frames_from_video(video_file, times, use_multithreading=False, black
   :param max_perc_to_trim: Will trim 20% by default of the image at most in each dimension
   :return: Frames that are trimmed to not have any black bars
   """
-  # I had terrible problems with num_threads > 1.. no idea why, no progress on GH issues: https://github.com/dmlc/decord/issues/124
-  start_time = time.monotonic()
+  # I had terrible "DecodeError" problems with num_threads > 1.. no idea why, no progress on GH issues: https://github.com/dmlc/decord/issues/124
   vr = VideoReader(str(video_file), ctx=cpu(0), num_threads=1)
   fps = vr.get_avg_fps()
   # timestamp in seconds -> frame_index
@@ -136,6 +135,7 @@ def extract_frames_from_video(video_file, times, use_multithreading=False, black
     frame_indexes.append(int(t * fps))
   frames = vr.get_batch(frame_indexes).asnumpy()
   # print(f"⏰ Time to get {len(frame_indexes)} frames: {(time.monotonic() - start_time):.2f} seconds (time/frame = {((time.monotonic() - start_time)/len(frame_indexes)):.2f} sec)")
+  return frames
   y1, y2, x1, x2 = _detect_black_bars_from_video(frames, blackbar_threshold=blackbar_threshold,
                                                   max_perc_to_trim=max_perc_to_trim)
   return frames[:, y1:y2, x1:x2]

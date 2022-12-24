@@ -151,10 +151,11 @@ def main():
   else:
     # Create completed files database
     ds = dl.empty(WHISPER_RESULTS_DATASET_PATH, overwrite=True)
-     # todo: change to chunk_compression
+     # todo: change to chunk_compression -- NOOO Chunk has BUGS as confirmed by devs. Use common compression types only. 
+     # don't use ANY compression on json fields. Always buggy.
     with ds:
-      ds.create_tensor('caption', htype='text', dtype=str, sample_compression="lz4")
-      ds.create_tensor('segment_metadata', htype='json', sample_compression="lz4")
+      ds.create_tensor('caption', htype='text', dtype=str, sample_compression=None)
+      ds.create_tensor('segment_metadata', htype='text', dtype=str, sample_compression=None)
       ds.create_tensor('video_filename', htype='text', dtype=str, sample_compression=None)
       ds.create_tensor('video_filepath', htype='text', dtype=str, sample_compression=None)
 
