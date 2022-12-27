@@ -63,8 +63,7 @@ class ParallelEncode:
     for batch in work_to_do_list:
       self.work_queue.put(batch)
 
-  @ray.method(concurrency_group="parallel_whisper_instances"
-             )  # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
+  @ray.method(concurrency_group="parallel_whisper_instances")
   def parallel_text_encode(self):
     """
         Main function for parallel whisper.
@@ -72,7 +71,7 @@ class ParallelEncode:
     process = FlanT5Encoder()
     while self.work_queue.qsize() > 0:
       start = time.monotonic()
-      print(f"📌 Remaining Work Queue Size: {self.work_queue.qsize()}")
+      print(f"📌 {self.work_queue.qsize()} batches remaining")
       batch = self.work_queue.get(block=True)
       try:
         # returns: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
@@ -93,7 +92,7 @@ class ParallelEncode:
 
 
 @dl.compute
-def populate_tensor(sample_in, sample_out):
+def populate_ds_with_zeros(sample_in, sample_out):
   # assert type(sample_in_caption) == str or type(sample_in_caption) == np.str_, print(f"expecting just the pure caption. got {type(sample_in_caption)}")
   caption = sample_in.caption.data()["value"]
   tokenized = GLOBAL_TOKENIZER(caption, return_tensors="pt", truncation=False).input_ids
@@ -140,7 +139,7 @@ def main():
       output_ds.flush()
     with output_ds:
       print("Prepopulating `caption_embedding` tensor with custom-tokenized np.zeros((custom_token_len, 1024).")
-      populate_tensor().eval(output_ds, scheduler="ray", num_workers=11, skip_ok=True)
+      populate_ds_with_zeros().eval(output_ds, scheduler="ray", num_workers=NUM_PARALLEL_PROCESSES, skip_ok=True)
       print("Output ds after prepopulating")
       print(output_ds.summary())
 

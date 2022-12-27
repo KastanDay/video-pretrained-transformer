@@ -18,6 +18,12 @@ from deeplake_driver import DeeplakeManager
 from PIL import Image
 from ray.util.queue import Queue
 
+# pyright: reportGeneralTypeIssues=false
+# ^^ due to not understanding deeplake
+# pyright: reportPrivateImportUsage=false
+# pyright: reportOptionalMemberAccess=false
+# ^^ due to not understanding ray
+
 BATCH_NAME = 'parallel_15'
 # WHISPER_RESULTS_DATASET_PATH        = f'/mnt/storage_ssd/whisper_results_{BATCH_NAME}'
 WHISPER_RESULTS_DATASET_PATH = f'/mnt/storage_ssd/no_compression_whisper_results_{BATCH_NAME}'

@@ -8,8 +8,10 @@ import cv2
 import lovely_tensors as lt
 import numpy as np
 import torch
+from decord import (  # best random-access video reader all the lands.
+    VideoReader, cpu)
 from PIL import Image
-# import clip
+from termcolor import colored
 from transformers import CLIPProcessor, CLIPVisionModel, logging
 
 lt.monkey_patch()
@@ -17,12 +19,11 @@ lt.monkey_patch()
 # import skvideo.io
 # import imageio.v3 as iio
 # import av
-from decord import (  # best random-access video reader all the lands.
-    VideoReader, cpu)
-from termcolor import colored
+# import clip
 
-# os.environ['CUDA_LAUNCH_BLOCKING'] = '1' # just for testing.
-# os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3' # just for testing.
+# pyright: reportPrivateImportUsage=false
+# pyright: reportOptionalMemberAccess=false
+# ^^ due to not understanding ray
 
 # suppress: Some weights of the model checkpoint at google/flan-t5-large were not used when initializing model.
 # This is expected because we're initializing the encoder-only. So the decoder weights are not used.
@@ -218,7 +219,7 @@ def _detect_black_bars_from_video(frames, blackbar_threshold=16, max_perc_to_tri
   return y1, y2, x1, x2
 
 
-def kas_extract_single_frame_from_video(video_file, timestamp_sec, video_fps):
+def DEPRICATED_kas_extract_single_frame_from_video(video_file, timestamp_sec, video_fps):
   start_time = time.monotonic()
   frame_number = int(timestamp_sec * video_fps)
   frame = iio.imread(

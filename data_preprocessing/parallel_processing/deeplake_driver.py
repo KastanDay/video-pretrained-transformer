@@ -1,6 +1,7 @@
 # from collections import deque
 # import asyncio
 import inspect
+import json
 import pathlib
 import pprint
 import time
@@ -187,7 +188,7 @@ class DeeplakeManager():
                 'caption': segment['caption'],
                 'video_filename': segment["video_filename_name"],
                 'video_filepath': segment["video_filepath"],
-                'segment_metadata': dict(metadata),
+                'segment_metadata': dict(json.dumps(metadata)),
             })
           print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
           print(self.ds.summary())
@@ -223,7 +224,7 @@ def compress_and_delete_dataset(dataset_path, destructive=False):
     out_ds.create_tensor('clip_last_hidden_states', htype='image', dtype=np.float32, sample_compression='lz4')
     out_ds.create_tensor('clip_pooled_embedding', htype='image', dtype=np.float32, sample_compression='lz4')
     out_ds.create_tensor('frames', htype='image', dtype=np.uint8, sample_compression='jpeg')
-    out_ds.create_tensor('segment_metadata', htype='text', sample_compression='lz4')
+    out_ds.create_tensor('segment_metadata', htype='text', dtype=str, sample_compression='lz4')
     out_ds.create_tensor('timestamp', htype='generic', dtype=float, sample_compression='lz4')
     out_ds.create_tensor('video_filename', htype='text', dtype=str, sample_compression=None)
     out_ds.create_tensor('video_filepath', htype='text', dtype=str, sample_compression=None)

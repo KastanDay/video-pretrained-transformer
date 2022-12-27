@@ -19,6 +19,13 @@ from clip_encoder import ClipEncoder
 from deeplake_driver import DeeplakeManager
 from ray.util.queue import Queue
 from termcolor import colored
+from tqdm import tqdm
+
+# pyright: reportGeneralTypeIssues=false
+# ^^ due to not understanding deeplake
+# pyright: reportPrivateImportUsage=false
+# pyright: reportOptionalMemberAccess=false
+# ^^ due to not understanding ray
 
 global NUM_PARALLEL_PROCESSES
 global NUM_CPU_CORES
@@ -27,9 +34,11 @@ global GPU_PER_PROCESS
 
 # datasets
 BATCH_NAME = 'parallel_15'
-# INPUT_DATASET_PAT      = f'/mnt/storage_ssd/v2_text_encode_results_{BATCH_NAME}'
-INPUT_DATASET_PATH = f'/mnt/storage_ssd/clip_STARTER_results_{BATCH_NAME}'
-RESULTS_DATASET_PATH = f'/mnt/storage_ssd/clip_OUTPUT_results_{BATCH_NAME}'
+# INPUT_DATASET_PATH = f'/mnt/storage_hdd/thesis/yt_1b_dataset/backups/v3_text_encode_results_{BATCH_NAME}'
+# f'/mnt/storage_hdd/thesis/yt_1b_dataset/backups/v3_text_encode_results_{BATCH_NAME}'
+INPUT_DATASET_PATH = f'/tmp/v3_text_encode_results_{BATCH_NAME}'
+# RESULTS_DATASET_PATH = f'/mnt/storage_hdd/thesis/yt_1b_dataset/backups/v3_CLIP_encode_results_{BATCH_NAME}' # hdd
+RESULTS_DATASET_PATH = f'/mnt/storage_ssd/v4_CLIP_encode_results_{BATCH_NAME}'  # ssd
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
 # NUM_PARALLEL_PROCESSES = 20      # Number of parallel processes (limited by DRAM and SRAM)
@@ -68,8 +77,7 @@ class ParallelEncode:
     for batch in work_to_do_list:
       self.batches_to_do_queue.put(batch)
 
-  @ray.method(concurrency_group="parallel_whisper_instances"
-             )  # .70 and 1/30 equals 65% DRAM usage right immediately. Can't really go any higher.
+  @ray.method(concurrency_group="parallel_whisper_instances")
   def parallel_clip_encode(self):
     '''
     Main function for parallel clip. 
@@ -77,6 +85,7 @@ class ParallelEncode:
     start = time.monotonic()
     process = ClipEncoder(debug=False)
     while self.batches_to_do_queue.qsize() > 0:
+      print(f"📌 {self.batches_to_do_queue.qsize()} batches remaining")
       batch = self.batches_to_do_queue.get(block=True)
       try:
         results_dict = process.run_clip_one_batch(batch)
@@ -107,52 +116,70 @@ def main():
     print(colored(f"⚠️ Starting from scratch, sleeping 3 sec to cancel..", "red", attrs=["reverse", "bold"]))
     time.sleep(3)
     print(f"Creating new dataset at {RESULTS_DATASET_PATH}")
-    ds = dl.deepcopy(INPUT_DATASET_PATH, RESULTS_DATASET_PATH, overwrite=True)
+    ds = dl.deepcopy(INPUT_DATASET_PATH, RESULTS_DATASET_PATH)  #, overwrite=True)
+    # ds = dl.load(RESULTS_DATASET_PATH)
     # CLIP produces FP32 embeddings.
     # inspo --> if 'clip_pooled_embedding' not in ds.tensors.keys():
     with ds:
-      ds.create_tensor('clip_pooled_embedding', htype='generic', dtype=np.float32, sample_compression=None)
-      ds.create_tensor('clip_last_hidden_states', htype='generic', dtype=np.float32, sample_compression=None)
+      ds.create_tensor('clip_pooled_embedding', htype='generic', dtype=np.float32, sample_compression='lz4')
+      ds.create_tensor('clip_last_hidden_states', htype='generic', dtype=np.float32, sample_compression='lz4')
       ds.create_tensor('frames', htype='image', dtype=np.uint8, sample_compression='jpeg')
-      ds.create_tensor('timestamp', htype='generic', dtype=float, sample_compression=None)
-      print(ds.summary(), flush=True)
+      ds.create_tensor('timestamp', htype='generic', dtype=float, sample_compression='lz4')
+      # populate with none, so we can send it to the parallel workers.
+
       print("Filling clip properties with all `None` so we can index and populate it")
       start_time = time.monotonic()
-      # ds.clip_pooled_embedding.extend([np.zeros(1024, dtype=np.float32)] * ds.max_len)
-      # ds.clip_last_hidden_states.extend([np.zeros((577, 1024), dtype=np.float32)] * ds.max_len)
-      # ds.frames.extend([np.zeros((360,640,3), dtype=np.uint8)] * ds.max_len)
-      # ds.timestamp.extend([float(0)] * ds.max_len)
+      all_nones = [None] * ds.max_len  # previous method took 75 seconds
+      ds.clip_pooled_embedding.extend(all_nones)
+      ds.clip_last_hidden_states.extend(all_nones)
+      ds.frames.extend(all_nones)
+      ds.timestamp.extend(all_nones)
+      print(ds.summary(), flush=True)
+      print(f"⏰ Time to fill with Nones: {(time.monotonic() - start_time):.2f} seconds")
 
-      for _ in range(ds.max_len):
-        ds.append(
-            {
-                'clip_pooled_embedding': np.zeros(1024, dtype=np.float32),
-                'clip_last_hidden_states': np.zeros((577, 1024), dtype=np.float32),
-                'frames': np.zeros((360, 640, 3), dtype=np.uint8),
-                'timestamp': float(0),
-            },
-            skip_ok=True)  # skip tensors not in this dict (like the existing ones)
-      print(f"⏰ Time to fill empty np arrays: {(time.monotonic() - start_time):.2f} seconds")
+      start_time = time.monotonic()
+      populate_ds_with_zeros().eval(ds, scheduler="ray", num_workers=NUM_CPU_CORES, skip_ok=True)
+      print(f"⏰ Parallel.eval() Time to populate empty np arrays: {((time.monotonic() - start_time)/60):.2f} minutes")
 
-      # ds.clip_pooled_embedding.append(None)
-      # ds.clip_last_hidden_states.append(None)
-      # ds.frames.append(None)
-      # ds.timestamp.append(None)
+      # # todo: could make this parallel like in text-encoder.
+      # for _ in tqdm(range(ds.max_len),
+      #               desc='populating',
+      #               bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'):
+      #   ds.append(
+      #       {
+      #           'clip_pooled_embedding': np.zeros(1024, dtype=np.float32),
+      #           'clip_last_hidden_states': np.zeros((577, 1024), dtype=np.float32),
+      #           'frames': np.zeros((360, 640, 3), dtype=np.uint8),
+      #           'timestamp': float(0),
+      #       },
+      #       skip_ok=True)  # skip tensors not in this dict (like the existing ones)
     ds.flush()
     print(ds.summary(), flush=True)
-    time.sleep(5)
-    exit()
     # create batches
+    start_time = time.monotonic()
     segment_batch_list = add_samples_to_dict(ds, do_filtering=False)
+    print(f"⏰ add_samples_to_dict Filtering. Time to filter: {((time.monotonic() - start_time)/60):.2f} minutes")
 
   # segment_batch_list = segment_batch_list[:50] # for testing
   print("Num batches: ", len(segment_batch_list))
   print("Starting parallel batches")
-  parallel_encode = ParallelEncode.remote(all_clip_batches=segment_batch_list)
+  parallel_encode = ParallelEncode.remote(work_to_do_list=segment_batch_list)
   # only launch set number of workers, they all pull from the same work queue.
   all_done = ray.get([parallel_encode.parallel_clip_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)])
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
+
+
+@dl.compute
+def populate_ds_with_zeros(sample_in, sample_out):
+  '''
+  Pre-populate the dataset with zeros of proper shape. This makes it 100x faster to update later via indexing. 
+  '''
+  sample_out.clip_pooled_embedding.append(np.zeros(1024, dtype=np.float32))
+  sample_out.clip_last_hidden_states.append(np.zeros((577, 1024), dtype=np.float32))
+  sample_out.frames.append(np.zeros((360, 640, 3), dtype=np.uint8))
+  sample_out.timestamp.append(float(0))
+  return sample_out
 
 
 def add_samples_to_dict(ds, do_filtering):
@@ -171,8 +198,9 @@ def add_samples_to_dict(ds, do_filtering):
   start_time = time.monotonic()
 
   def add_one_sample(sample, batch, list_of_batches, total_samples):
-    seg_start_time = float(sample['segment_metadata'].data()['value']['start'])
-    seg_end_time = float(sample['segment_metadata'].data()['value']['end'])
+    metadata = json.loads(sample['segment_metadata_v2'].data()['value'])
+    seg_start_time = float(metadata['start'])
+    seg_end_time = float(metadata['end'])
     midpoint = (seg_end_time + seg_start_time) / 2
 
     # add to dict {'<filepath>': [<frame_timestamp>, ...]}
@@ -200,7 +228,6 @@ def add_samples_to_dict(ds, do_filtering):
     if do_filtering:
       # Test if numpy array contains only zeros (they're initialized that way)
       if not sample.clip_pooled_embedding.numpy().any():
-        print(f"Adding sample: {idx}")
         sample, batch, list_of_batches, total_samples = add_one_sample(sample, batch, list_of_batches, total_samples)
     else:
       # just add everything

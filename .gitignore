@@ -1,6 +1,8 @@
 # Don't accidentlly check in big video files, or our big output jsonl
 *.mp4
 *dummy*
+trying*
+wandb
 *.jsonl
 # Byte-compiled / optimized / DLL files
 __pycache__/
