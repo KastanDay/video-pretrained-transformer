@@ -46,16 +46,12 @@ class VPT_model(ComposerModel):
     self.model.train()
     self.train_itr = 0
 
-    # wandb.init()
-
   def forward(self, batch):
     print("batch: ", batch)
     batch_size = batch['labels'].shape[0]
-    input_embeds_arr = torch.cat([
-        batch['clip_pooled_embedding'].reshape(batch_size, 1, -1), batch['clip_last_hidden_states'],
-        batch['caption_embedding']
-    ],
-                                 dim=1)  # concat along sequence dimension
+    input_embeds_arr = torch.cat(
+        [batch['clip_pooled_embedding'], batch['clip_last_hidden_states'], batch['caption_embedding']],
+        dim=1)  # concat along sequence dimension
     print("Shape of input_embeds_arr: ", input_embeds_arr.shape)
     self.train_itr += 1
     # outputs = t5.forward()
@@ -69,9 +65,9 @@ class VPT_model(ComposerModel):
     return -1
 
   def loss(self, outputs, batch):
-    # _, targets = batch
-    # TODO Loss is from huggingface model outputs
-    # wandb.log({"loss": outputs[0]})
+    '''
+    Return loss from huggingface model outputs.
+    '''
     return outputs[0]
 
 
