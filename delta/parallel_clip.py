@@ -2,9 +2,9 @@ import os # must be first
 os.environ['TRANSFORMERS_CACHE'] = '/tmp/huggingface_cache' # must be first
 
 import sys
-sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing") # DELTA
-# sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing") # HAL
-from data_preprocessing import DataPreprocessor
+# sys.path.append(os.path.join(os.getcwd(),"../data_preprocessing/whisper_audio"))
+# import CaptionPreprocessing as CaptionPreprocessing
+# print(sys.path)
 
 import pathlib
 import time
@@ -17,10 +17,61 @@ import more_itertools
 import jsonlines
 import traceback
 
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
+global FINAL_RESULTS_DESTINATION
+global INPUT_DIR_ON_SCRATCH
+global INPUT_DIR_TO_TRANSCRIBE
+global LOCAL_RESULTS_JSONL
+global LOCAL_ERRORS_JSONL
+global LOCAL_EMPTY_JSONL
+global LOCAL_CLIP_JSONL
+# get hostname
+result = subprocess.run(["hostname"], capture_output=True, text=True)
+hostname = str(result.stdout.strip())
+
+dir_name = 'parallel_12' # 😁 SET ME 😁
+if 'hal' in hostname:
+    print("RUNNING ON HAL")
+    sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing") # HAL
+
+    REMOTE_WHISPER_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
+    REMOTE_INPUT_VIDEO_PATH = f'/home/kastanday/thesis/whisper/{dir_name}'
+    REMOTE_CLIP_JSONL       = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output.jsonl'
+    LOCAL_INPUT_VIDEO_PATH  = f'/home/kastanday/thesis/whisper/{dir_name}'
+    LOCAL_RESULTS_JSONL     = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
+    LOCAL_ERRORS_JSONL      = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_errors.jsonl'
+    LOCAL_EMPTY_JSONL       = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_empty.jsonl'
+    LOCAL_CLIP_JSONL        = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output.jsonl'
+elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
+    print("RUNNING ON DELTA")
+    sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing") # DELTA
+
+    REMOTE_WHISPER_JSONL_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
+    REMOTE_INPUT_VIDEO_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
+    REMOTE_CLIP_JSONL      = f'/scratch/bbki/kastanday/whisper/{dir_name}_clip_output.jsonl'
+    LOCAL_INPUT_VIDEO_PATH = f'/tmp/{dir_name}'
+    LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
+    LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
+    LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
+    LOCAL_CLIP_JSONL      = f'/tmp/{dir_name}_clip_output.jsonl'
+elif any(word in hostname for word in ['aws', 'ec2']): # TODO
+    raise NotImplementedError 
+else:
+    raise("No valid hostname error. Exiting")
+
+from data_preprocessing import DataPreprocessor
+
 # Good vals for Delta CPU nodes. 
 # NUM_THREADS = 3
 # NUM_CPUS = 1
 # GPU_PER_PROCESS = 0 # 1/12 is perfect balance on 4 gpus. Smaller demon = more spread across GPUs.
+
+# THIS is GREAT balance on delta GPU, 4X GPU with clip running
+NUM_THREADS = 18  # x3 for 3 worker nodes. 
+NUM_CPU_CORES = 64
+NUM_GPUS = 4
+GPU_PER_PROCESS = 1/2 # 1/4 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
 # FOR Delta 8x GPU
 # NUM_THREADS = 55*2 # first one always dies for some reason.
@@ -28,100 +79,18 @@ import traceback
 # NUM_GPUS = 7.5
 # GPU_PER_PROCESS = 1/15 # 1/16 # 1/16 is perfect balance on 4 gpus. Bigger value = more spread across GPUs.
 
-def run_main():
-    ''' iterate over parallel directories. '''
-    
-    
-    ''' Change directory behavior based on Compute Cluster (Delta / HAL / AWS) '''
-    global REMOTE_WHISPER_JSONL_PATH
-    global REMOTE_CLIP_OUTPUT_DIR
-    global REMOTE_INPUT_VIDEO_PATH
-    global LOCAL_INPUT_VIDEO_PATH
-    global LOCAL_RESULTS_JSONL
-    global LOCAL_ERRORS_JSONL
-    global LOCAL_EMPTY_JSONL
-    global LOCAL_CLIP_JSONL
-    
-    global NUM_THREADS
-    global NUM_CPU_CORES
-    global NUM_GPUS
-    global GPU_PER_PROCESS
-    
-    # THIS is GREAT balance on delta GPU, 4X GPU with clip running
-    NUM_THREADS = 20      # Number of parallel processes (limited by DRAM and SRAM)
-    NUM_CPU_CORES = 64    # Numer of available physical cores to use (use max!)
-    NUM_GPUS = 4          # Number of physical GPUs to use (use max)
-    GPU_PER_PROCESS = 1/5 # threads per GPU, limited by OOM errors while also maximizing spread. 
-    
-    # NUM_CPU_CORES/NUM_THREADS
-    
-    ''' Setup Ray '''
-    result = subprocess.run(["hostname", "-i"], capture_output=True, text=True)
-    head_ip = result.stdout.strip()
-    print(f"Connecting to Ray... at address ray://{head_ip}:10001")
-    # ray.init(address=f'{head_ip}:62158', dashboard_port=8265)   # most reliable way to start Ray
-    ray.init(num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS, ignore_reinit_error=True)# dashboard_port=8265)
-    # ray.init(num_gpus=NUM_CPU_CORES, num_cpus=NUM_THREADS, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
-    # use port-forwarding to see dashboard: `ssh -L 8265:localhost:8265 kastanday@kingfisher.ncsa.illinois.edu`
-    assert ray.is_initialized() == True
-    print("🎯 Ray initialized.")
-    print_cluster_stats()
-    
-    # 😁 SET ME 😁
-    DIRS_TO_PROCESS = [ 
-                        'parallel_12'
-                        # 'parallel_11'
-                        # 'parallel_18',
-                        # 'parallel_19'
-                    ]
-    for dir_name in DIRS_TO_PROCESS:
-        # run everything twice to mitigate errors (will skip completed work)
-        for i in range(2):
-            # get hostname
-            result = subprocess.run(["hostname"], capture_output=True, text=True)
-            hostname = str(result.stdout.strip())
-            
-            if 'hal' in hostname:
-                REMOTE_WHISPER_JSONL_PATH = f'/home/kastanday/thesis/whisper/{dir_name}_whisper_output.jsonl'
-                REMOTE_CLIP_OUTPUT_DIR     = f'/home/kastanday/thesis/whisper/{dir_name}_clip_output'
-                REMOTE_INPUT_VIDEO_PATH = f'/home/kastanday/thesis/whisper/{dir_name}'
-                LOCAL_INPUT_VIDEO_PATH        = f'/tmp/{dir_name}'
-                LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-                LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-                LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-                LOCAL_CLIP_JSONL      = f'/tmp/{dir_name}_clip_output.jsonl'
-            elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
-                print("RUNNING ON DELTA")
-                REMOTE_WHISPER_JSONL_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}_whisper_output.jsonl'
-                REMOTE_INPUT_VIDEO_PATH = f'/scratch/bbki/kastanday/whisper/{dir_name}'
-                REMOTE_CLIP_OUTPUT_DIR  = f'/scratch/bbki/kastanday/whisper/{dir_name}_clip_output'
-                LOCAL_INPUT_VIDEO_PATH  = f'/tmp/{dir_name}'
-                LOCAL_RESULTS_JSONL     = f'/tmp/{dir_name}_whisper_output.jsonl'
-                LOCAL_ERRORS_JSONL      = f'/tmp/{dir_name}_whisper_errors.jsonl'
-                LOCAL_EMPTY_JSONL       = f'/tmp/{dir_name}_whisper_empty.jsonl'
-                LOCAL_CLIP_JSONL        = f'/tmp/{dir_name}_clip_output.jsonl'
-            elif any(word in hostname for word in ['aws', 'ec2']): # TODO
-                raise NotImplementedError 
-            else:
-                raise("No valid hostname error. Exiting")
-            
-            # ensure no cuda OOM errors on 2nd run.
-            if i == 1:
-                GPU_PER_PROCESS = 1 
-                NUM_THREADS = 4
-            
-            # make output dir
-            if not os.path.exists(REMOTE_CLIP_OUTPUT_DIR):
-                pathlib.Path(REMOTE_CLIP_OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
-            
-            # RUN MAIN with current settings.
-            main()
+# NUM_PHYSICAL_CORES_TO_USE = 64
 
 @ray.remote(num_cpus=2, num_gpus=1/4)
 def parallel_clip(file_batch, stem_to_filename, stem_to_whisper):
     start = time.monotonic()
-    # sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")  # Kastan server
-    sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing") # Delta
+    # sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing")
+    # sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
+    if 'hal' in hostname:
+        sys.path.append("/home/kastanday/thesis/video-pretrained-transformer/data_preprocessing") # HAL
+    elif any(word in hostname for word in ['gpub', 'gpuc', 'dt-login']):
+        sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing") # DELTA
+
     from data_preprocessing import DataPreprocessor
     my_clip_preprocesser = DataPreprocessor(video_data_path=REMOTE_INPUT_VIDEO_PATH, audio_jsonl=REMOTE_WHISPER_JSONL_PATH, output_path_dir=REMOTE_CLIP_OUTPUT_DIR, debug=False)
     for index, file_stem in enumerate(file_batch):
@@ -145,7 +114,33 @@ def parallel_clip(file_batch, stem_to_filename, stem_to_whisper):
         start = time.monotonic()
 
 def main():
-    """ NOT the true main(), this is called by run_main() """
+    """ MAIN """
+    # init ray
+    result = subprocess.run(["hostname", "-i"], capture_output=True, text=True)
+    head_ip = result.stdout.strip()
+    print(f"Connecting to Ray... at address ray://{head_ip}:6379")
+    # ray.init(address=f'{head_ip}:62158', dashboard_port=8265)   # most reliable way to start Ray
+    # ray.init(address='141.142.145.119:60952', ignore_reinit_error=True,)# dashboard_port=8265)
+    # /home/kastanday/thesis/video-pretrained-transformer/delta/hal-env-file.txt
+    # https://docs.ray.io/en/latest/ray-core/handling-dependencies.html#runtime-environments-api-ref
+
+    # I can specify configs!! runtime_env={'conda': 'alpa_opence_clone', "config"={"setup_timeout_seconds": 120}} 
+    # ray.init(address='ray://{head_ip}:6379', runtime_env={'conda': 'alpa_opence_clone'}, ignore_reinit_error=True,)# dashboard_port=8265)
+    ray.init(address='auto', runtime_env={'conda': 'alpa_opence_clone'}, ignore_reinit_error=True,)# dashboard_port=8265)
+    # use port-forwarding to see dashboard: `ssh -L 8265:localhost:8265 kastanday@kingfisher.ncsa.illinois.edu`
+    print(f"Port forward with command:\n\t\tssh -L 8265:localhost:8265")
+    assert ray.is_initialized() == True
+    print("🎯 Ray initialized.")
+
+    # ray.init(num_gpus=NUM_CPU_CORES, num_cpus=NUM_THREADS, include_dashboard = False, ignore_reinit_error=True) # , num_gpus = 1
+    print_cluster_stats()
+    start = time.time()
+    
+    # REMOVE LOCK before starting run (lock could be there if we crash)
+    lock_file = pathlib.Path(LOCAL_CLIP_JSONL).parent / (pathlib.Path(LOCAL_CLIP_JSONL).name + '.lock') # same exact filename, with a second .lock extension.
+    if os.path.exists(lock_file):
+        os.remove(lock_file)
+        print("Removed lock file.")
     
     sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing")
     from data_preprocessing import DataPreprocessor
