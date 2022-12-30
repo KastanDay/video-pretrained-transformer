@@ -1,3 +1,16 @@
+'''
+Requirements:
+pip install mosaicml transformers "deeplake[enterprise]" wandb lovely-tensors  pandas termcolor sentencepiece
+not 100% necessary for this file: "ray[default]==2.2.0"
+
+
+pyright: reportGeneralTypeIssues=false
+^^ due to not understanding deeplake
+pyright: reportPrivateImportUsage=false
+pyright: reportOptionalMemberAccess=false
+pyright: reportOptionalCall=false
+^^ due to not understanding ray
+'''
 import os
 import traceback
 
@@ -12,16 +25,12 @@ from modeling_vpt_in_mosaicml import VPT_model  # original work
 from termcolor import colored
 from tqdm import tqdm
 
-# pyright: reportGeneralTypeIssues=false
-# ^^ due to not understanding deeplake
-# pyright: reportPrivateImportUsage=false
-# pyright: reportOptionalMemberAccess=false
-# pyright: reportOptionalCall=false
-# ^^ due to not understanding ray
-
-# pip install transformers "deeplake[enterprise]" wandb lovely-tensors  pandas termcolor sentencepiece
-# not 100% necessary ofr this file: "ray[default]==2.2.0"
 lt.monkey_patch()
+
+# device = "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print("👾 Running on:", device)
+
 # hyperparams
 MODEL_VERSION_NAME = 'mosaic_yt_pretrain_half_half'
 learning_rate = 1e-4  # also good: 3e-4
@@ -76,25 +85,31 @@ def main():
           ],
       })
 
+  # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
+  # todo: implement model saving
+  # todo: implement LR scheduler.... cosine decay with warmup.
   trainer = Trainer(
       model=model,
       train_dataloader=train_dataloader,
       optimizers=optimizer,
       max_duration=5,  # epochs 
-      device='cpu',  # todo change
+      device=device,  # todo change
       loggers=[wandb_logger],
+      run_name=f'{MODEL_VERSION_NAME}',
+      save_folder=f"/raid/{MODEL_VERSION_NAME}/checkpoints",
+      save_interval="2000ba",  # 2k batches
+      save_num_checkpoints_to_keep=5,
+      overwrite=True,  # existing checkpoints overwritten
+      # save_folder="s3://my-bucket/{run_name}/checkpoints",
+      # save_filename="ep{epoch}.pt",
+      # save_overwrite=True,
+      # load_path="./path/to/checkpoints/ep25.pt",  # resume from checkpoint
       seed=42)
-  # , # todo
-  # eval_dataloader=eval_dataloader,
-  # eval_interval='1ep',
-  # eval_dataloader=eval_dataloader,
   trainer.fit()
 
 
 from transformers import T5Tokenizer
 
-device = "cpu"
-# device = "cuda" if torch.cuda.is_available() else "cpu"
 model_huggingface_name = "google/t5-v1_1-large"
 t5_tokenizer = T5Tokenizer.from_pretrained(model_huggingface_name, return_special_tokens_mask=True)
 
@@ -107,26 +122,24 @@ def my_dataloader_batching_transform(segment_batch):
   returns: batch dictionary.  Keys: input_embeds_arr, attn_mask_arr, labels_tokenized
                               Values: batched Torch Tensors of shape <1, 1024, 1024>. These are stacked to create a batch.
   '''
-  print("👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉 SEGMENT BATCH", flush=True)
+  # print("👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉 SEGMENT BATCH", flush=True)
   batch = {}  # keys: input_embeds_arr, attn_mask_arr, labels
 
   # Loop over BATCH_SIZE. Create dictionary where key = name, value = batched tensor
   for key, numpy_array in zip(segment_batch.keys(), segment_batch):
-    print("------------- PRINTING SEGMENT --------- ")
-
+    # print("------------- PRINTING SEGMENT --------- ")
     if key == 'clip_pooled_embedding':
       print("⭐️1️⃣ pooled embedding")
-      # .reshape(batch_size, 1, -1)
+      numpy_array = numpy_array.reshape(1, -1)  # for batch size purposes.
       if key in batch.keys():
         batch[key] = torch.cat((batch[key], torch.from_numpy(numpy_array).to(device)), dim=0)
       else:
         batch[key] = torch.from_numpy(numpy_array).to(device)
 
     elif key == 'caption_embedding':
-      print("⭐️2️⃣ caption embedding")
+      # print("⭐️2️⃣ caption embedding")
       # keep only the first HALF of caption embedding.
       caption_length = numpy_array.shape[0]
-      print("Caption length (should be about 32 ish):", caption_length)
       s_half = caption_length // 2
       # constant length of 446, pad with zeros. 446 is the max length of a caption (1024 - 577 - 1).
       caption_embedding_full_length = torch.zeros((446, 1024)).to(device)
@@ -147,7 +160,7 @@ def my_dataloader_batching_transform(segment_batch):
         batch['attn_mask_arr'] = attn_mask_arr
 
     elif key == 'clip_last_hidden_states':
-      print("⭐️3️⃣ clip last hidden states")
+      # print("⭐️3️⃣ clip last hidden states")
       if key in batch.keys():
         batch[key] = torch.cat((batch[key], torch.from_numpy(numpy_array).to(device)), dim=0)
       else:
@@ -155,15 +168,13 @@ def my_dataloader_batching_transform(segment_batch):
 
     elif key == 'caption':
       caption = numpy_array[0]  # passed in as a single-element list.
-      print("⭐️4️⃣ CAPTION")
+      # print("⭐️4️⃣ CAPTION")
       print(caption)
       full_caption_tokenized = t5_tokenizer(caption, padding=False, truncation=True,
                                             return_tensors="pt").input_ids.to(device)
-      print("FULL CAPTION TOKENIZED shape", full_caption_tokenized.shape)
       caption_length = full_caption_tokenized.shape[1]
       s_half = caption_length // 2
       # only keep 2nd half of caption to use as labels.
-      print("only 2nd half of captions shape: ", full_caption_tokenized[0][s_half:].shape[0])
       proper_shape = full_caption_tokenized[0][s_half:].shape[0]
       labels_full_length = torch.ones((512), dtype=torch.int64).to(device) * -100
       labels_full_length[:proper_shape] = full_caption_tokenized[0][s_half:]  # 👈 take 2nd half!!
