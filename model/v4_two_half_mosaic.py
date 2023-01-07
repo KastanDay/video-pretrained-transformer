@@ -32,43 +32,26 @@ import transformers
 
 lt.monkey_patch()
 
-
 # device = "cpu"
 device = "cuda" if torch.cuda.is_available() else "cpu"
-<<<<<<< HEAD
 print("Running on:", device)
 model_huggingface_name = "google/t5-v1_1-large"
-=======
-print("👾 Running on:", device)
-# model_huggingface_name = "google/t5-v1_1-large"
-model_huggingface_name = "google/t5-v1_1-base"
->>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
 
 result = subprocess.run(["hostname"], capture_output=True, text=True)
 hostname = str(result.stdout.strip())
 
-if "gpu" in hostname or "gpu" in hostname: 
-<<<<<<< HEAD
+if "gpu" in hostname or "gpu" in hostname:
   print("Hostname: Delta GPU")
   BASE_DIR = '/scratch/bbki/kastanday/whisper'
-elif 'storage' in hostname: 
+elif 'storage' in hostname:
   print("Hostname: kastan storage")
   BASE_DIR = '/mnt/storage_ssd'
-elif 'dgx' in hostname: 
+elif 'dgx' in hostname:
   print("Hostname: DGX")
   BASE_DIR = '/raid/projects/kastan'
 elif 'hal' in hostname:
   print("Hostname: HAL")
-=======
-  BASE_DIR = '/scratch/bbki/kastanday/whisper'
-elif 'storage' in hostname: 
-  BASE_DIR = '/mnt/storage_ssd'
-elif 'dgx' in hostname: 
-  BASE_DIR = '~/VPT/'
-elif 'hal' in hostname:
->>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
   BASE_DIR = '~/thesis/VPT_data/'
-
 
 # hyperparams
 MODEL_VERSION_NAME = 'mosaic_yt_pretrain_half_half'
@@ -90,43 +73,26 @@ def main():
                                 pin_memory=False,
                                 shuffle=False,
                                 drop_last=False)
-<<<<<<< HEAD
 
   # run training with our model
   # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
-=======
-  # eval_dataloader = ds.pytorch(tensors=columns_for_training,
-  #                              transform=my_dataloader_batching_transform,
-  #                              num_workers=0,
-  #                              batch_size=1,
-  #                              pin_memory=False,
-  #                              shuffle=False,
-  #                              drop_last=False)
-
-  # run training with our model
-  # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
-  model_huggingface_name
->>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
   model = VPT_model(model_huggingface_name=model_huggingface_name, model_version_name=MODEL_VERSION_NAME)
 
   # adafactor setup as suggested here: https://discuss.huggingface.co/t/t5-finetuning-tips/684/3
   # todo: Critically implement LR warmup if using adafactor.
   # Training without LR warmup or clip_threshold is not recommended.
   # use scheduled LR warm-up to fixed LR
-  # FOR EX: 
+  # FOR EX:
   # from transformers.optimization import Adafactor, AdafactorSchedule
   # optimizer = Adafactor(model.parameters(), scale_parameter=True, relative_step=True, warmup_init=True, lr=None)
   # lr_scheduler = AdafactorSchedule(optimizer)
   # optimizer = transformers.Adafactor(params=model.parameters(), lr=0.001, scale_parameter=False, relative_step=False)
   # fsdp_config['min_params']
 
-<<<<<<< HEAD
   # all params are fp32
   # for param in model.parameters():
   #   print(param.dtype)
-    
-=======
->>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
+
   optimizer = torch.optim.AdamW(params=model.parameters(),
                                 lr=learning_rate)  # Typically, 1e-4 and 3e-4 work well for most problems
   wandb_logger = WandBLogger(
@@ -153,18 +119,18 @@ def main():
   # If any module has more parameters than fsdp_config['min_params'], it will be wrapped.
 
   fsdp_config = {
-    'sharding_strategy': 'FULL_SHARD',
-    'min_params': 1e8,
-    'mixed_precision': 'DEFAULT',
-    'backward_prefetch': 'BACKWARD_POST',
-    'activation_checkpointing': False,
-    'verbose': True
+      'sharding_strategy': 'FULL_SHARD',
+      'min_params': 1e8,
+      'mixed_precision': 'DEFAULT',
+      'backward_prefetch': 'BACKWARD_POST',
+      'activation_checkpointing': False,
+      'verbose': True
   }
 
   # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
   # todo: implement model saving
   # todo: implement LR scheduler.... cosine decay with warmup.
-  
+
   # trainer_device = 'cpu'
   trainer_device = 'gpu'
   print(f"Running Trainer on {trainer_device}")
@@ -173,9 +139,8 @@ def main():
       train_dataloader=train_dataloader,
       eval_dataloader=train_dataloader,
       optimizers=optimizer,
-<<<<<<< HEAD
       max_duration=3,  # epochs 
-      device=trainer_device, # "gpu" if torch.cuda.is_available() else "cpu",
+      device=trainer_device,  # "gpu" if torch.cuda.is_available() else "cpu",
       run_name=f'{MODEL_VERSION_NAME}',
       save_folder=f"{BASE_DIR}/{MODEL_VERSION_NAME}/checkpoints",
       save_interval="500ba",  # 2k batches
@@ -184,21 +149,13 @@ def main():
       # eval_interval=100,
       loggers=[wandb_logger],
       precision='fp32',
-=======
-      max_duration=5,  # epochs 
-      device="gpu" if torch.cuda.is_available() else "cpu",
-      loggers=[wandb_logger],
-      run_name=f'{MODEL_VERSION_NAME}',
-      save_folder=f"{BASE_DIR}/{MODEL_VERSION_NAME}/checkpoints",
-      save_interval="2000ba",  # 2k batches
-      save_num_checkpoints_to_keep=5,
->>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
       # fsdp_config=fsdp_config,
       # overwrite=True,  # existing checkpoints overwritten
       # save_folder="s3://my-bucket/{run_name}/checkpoints",
       # save_filename="ep{epoch}.pt",
       # save_overwrite=True,
-      load_path="/raid/projects/kastan/mosaic_yt_pretrain_half_half/checkpoints/latest-rank0.pt",  # resume from checkpoint
+      load_path=
+      "/raid/projects/kastan/mosaic_yt_pretrain_half_half/checkpoints/latest-rank0.pt",  # resume from checkpoint
       seed=42)
   trainer.fit()
 
