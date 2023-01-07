@@ -344,10 +344,10 @@ class DataPreprocessor:
                 "captions": whisper_segments[i]['caption'],
                 "segment_start_time": whisper_segments[i]['start'],
                 "segment_end_time": whisper_segments[i]['end'],
-                "num_frames_per_segment": np.int16(self.num_frames),
-                "frame_embeddings": image_feature,
-                "text_caption_embeddings": caption_feature,
-                "segment_frames": segment_frame,
+                "num_frames_per_segment": self.num_frames,
+                "frame_embeddings": json_numpy.dumps(image_feature),
+                "text_caption_embeddings": json_numpy.dumps(caption_feature),
+                "segment_frames": json_numpy.dumps(segment_frame),
                 "frame_embeddings_shape": image_feature.shape,          # trying the FLATTEN technique!
                 "text_caption_embeddings_shape": caption_feature.shape,
                 "segment_frames_shape": segment_frame.shape,
@@ -356,9 +356,7 @@ class DataPreprocessor:
             # encode & compress each segment, then write them all at once.
             # couldn't do compression cuz json doesn't support bytes. LIKE WTFFF WHY NOT.
             list_of_segment_outputs.append(one_segment_output) # , compression=True, properties={'ndarray_compact': True}
-        
-        # whole_video_df = xarray.concat(list_of_segment_outputs, dim='video_stem') # index is videostem.
-        
+            
         # write all at once. Thread safe. This uses more dram, but might be with slow file IO systems. 
         # Also, writing all at once keeps segments from the same video close together in the json lines, otherwise they're all spread around. 
         if self.debug:

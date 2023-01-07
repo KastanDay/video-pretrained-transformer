@@ -14,6 +14,7 @@ pyright: reportOptionalCall=false
 import os
 import subprocess
 import traceback
+import subprocess
 
 import deeplake as dl
 import lovely_tensors as lt
@@ -27,19 +28,27 @@ from composer.models import HuggingFaceModel
 from modeling_vpt_in_mosaicml import VPT_model  # original work
 from termcolor import colored
 from tqdm import tqdm
+import transformers
 
 lt.monkey_patch()
 
 
 # device = "cpu"
 device = "cuda" if torch.cuda.is_available() else "cpu"
+<<<<<<< HEAD
 print("Running on:", device)
 model_huggingface_name = "google/t5-v1_1-large"
+=======
+print("👾 Running on:", device)
+# model_huggingface_name = "google/t5-v1_1-large"
+model_huggingface_name = "google/t5-v1_1-base"
+>>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
 
 result = subprocess.run(["hostname"], capture_output=True, text=True)
 hostname = str(result.stdout.strip())
 
 if "gpu" in hostname or "gpu" in hostname: 
+<<<<<<< HEAD
   print("Hostname: Delta GPU")
   BASE_DIR = '/scratch/bbki/kastanday/whisper'
 elif 'storage' in hostname: 
@@ -50,6 +59,14 @@ elif 'dgx' in hostname:
   BASE_DIR = '/raid/projects/kastan'
 elif 'hal' in hostname:
   print("Hostname: HAL")
+=======
+  BASE_DIR = '/scratch/bbki/kastanday/whisper'
+elif 'storage' in hostname: 
+  BASE_DIR = '/mnt/storage_ssd'
+elif 'dgx' in hostname: 
+  BASE_DIR = '~/VPT/'
+elif 'hal' in hostname:
+>>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
   BASE_DIR = '~/thesis/VPT_data/'
 
 
@@ -69,13 +86,27 @@ def main():
   train_dataloader = ds.pytorch(tensors=columns_for_training,
                                 transform=my_dataloader_batching_transform,
                                 num_workers=0,
-                                batch_size=2,
+                                batch_size=1,
                                 pin_memory=False,
                                 shuffle=False,
                                 drop_last=False)
+<<<<<<< HEAD
 
   # run training with our model
   # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
+=======
+  # eval_dataloader = ds.pytorch(tensors=columns_for_training,
+  #                              transform=my_dataloader_batching_transform,
+  #                              num_workers=0,
+  #                              batch_size=1,
+  #                              pin_memory=False,
+  #                              shuffle=False,
+  #                              drop_last=False)
+
+  # run training with our model
+  # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
+  model_huggingface_name
+>>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
   model = VPT_model(model_huggingface_name=model_huggingface_name, model_version_name=MODEL_VERSION_NAME)
 
   # adafactor setup as suggested here: https://discuss.huggingface.co/t/t5-finetuning-tips/684/3
@@ -89,10 +120,13 @@ def main():
   # optimizer = transformers.Adafactor(params=model.parameters(), lr=0.001, scale_parameter=False, relative_step=False)
   # fsdp_config['min_params']
 
+<<<<<<< HEAD
   # all params are fp32
   # for param in model.parameters():
   #   print(param.dtype)
     
+=======
+>>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
   optimizer = torch.optim.AdamW(params=model.parameters(),
                                 lr=learning_rate)  # Typically, 1e-4 and 3e-4 work well for most problems
   wandb_logger = WandBLogger(
@@ -139,6 +173,7 @@ def main():
       train_dataloader=train_dataloader,
       eval_dataloader=train_dataloader,
       optimizers=optimizer,
+<<<<<<< HEAD
       max_duration=3,  # epochs 
       device=trainer_device, # "gpu" if torch.cuda.is_available() else "cpu",
       run_name=f'{MODEL_VERSION_NAME}',
@@ -149,6 +184,15 @@ def main():
       # eval_interval=100,
       loggers=[wandb_logger],
       precision='fp32',
+=======
+      max_duration=5,  # epochs 
+      device="gpu" if torch.cuda.is_available() else "cpu",
+      loggers=[wandb_logger],
+      run_name=f'{MODEL_VERSION_NAME}',
+      save_folder=f"{BASE_DIR}/{MODEL_VERSION_NAME}/checkpoints",
+      save_interval="2000ba",  # 2k batches
+      save_num_checkpoints_to_keep=5,
+>>>>>>> a42db03a4a7472109b256dc953e7112c800bb130
       # fsdp_config=fsdp_config,
       # overwrite=True,  # existing checkpoints overwritten
       # save_folder="s3://my-bucket/{run_name}/checkpoints",
