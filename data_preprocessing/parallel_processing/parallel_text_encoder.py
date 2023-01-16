@@ -51,7 +51,7 @@ BATCH_SIZE = 512
 
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 @ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES},
-            num_cpus=NUM_CPU_CORES,
+            num_cpus=0,
             num_gpus=NUM_GPUS)
 class ParallelEncode:
   """

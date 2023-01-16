@@ -39,7 +39,7 @@ NUM_THREADS = 2
 NUM_CPU_CORES = 6
 
 
-@ray.remote(concurrency_groups={"parallel_whisper_instances": 2}, num_cpus=6, num_gpus=1)
+@ray.remote(concurrency_groups={"parallel_whisper_instances": 2}, num_cpus=0, num_gpus=1)
 class ParallelWhisper:
 
   def __init__(self):

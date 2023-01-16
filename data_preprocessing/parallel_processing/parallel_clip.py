@@ -65,7 +65,7 @@ BATCH_SIZE = 30  # 30 * 2 threads. good on 11GB
 
 
 @ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES},
-            num_cpus=math.ceil(NUM_CPU_CORES / NUM_PARALLEL_PROCESSES),
+            num_cpus=0,
             num_gpus=NUM_GPUS / NUM_PARALLEL_PROCESSES)
 class ParallelEncode:
   '''
