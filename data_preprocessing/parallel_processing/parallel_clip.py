@@ -9,6 +9,7 @@ import pprint
 import sys
 import time
 import traceback
+import math 
 
 import deeplake as dl
 import jsonlines
@@ -21,6 +22,9 @@ from ray.util.queue import Queue
 from termcolor import colored
 from tqdm import tqdm
 
+# TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
+os.environ["RAY_memory_monitor_refresh_ms"] = "0" # prevents ray from killing the process when it runs out of memory
+
 # pyright: reportGeneralTypeIssues=false
 # ^^ due to not understanding deeplake
 # pyright: reportPrivateImportUsage=false
@@ -32,13 +36,18 @@ global NUM_CPU_CORES
 global NUM_GPUS
 global GPU_PER_PROCESS
 
+
 # datasets
-BATCH_NAME = 'parallel_15'
+# BATCH_NAME = 'parallel_15'
 # INPUT_DATASET_PATH = f'/mnt/storage_hdd/thesis/yt_1b_dataset/backups/v3_text_encode_results_{BATCH_NAME}'
 # f'/mnt/storage_hdd/thesis/yt_1b_dataset/backups/v3_text_encode_results_{BATCH_NAME}'
-INPUT_DATASET_PATH = f'/tmp/v3_text_encode_results_{BATCH_NAME}'
+# INPUT_DATASET_PATH = f'/tmp/v3_text_encode_results_{BATCH_NAME}'
 # RESULTS_DATASET_PATH = f'/mnt/storage_hdd/thesis/yt_1b_dataset/backups/v3_CLIP_encode_results_{BATCH_NAME}' # hdd
-RESULTS_DATASET_PATH = f'/mnt/storage_ssd/v4_CLIP_encode_results_{BATCH_NAME}'  # ssd
+# RESULTS_DATASET_PATH = f'/mnt/storage_ssd/v4_CLIP_encode_results_{BATCH_NAME}'  # ssd
+
+BATCH_NAME = "handpicked_downloads"
+INPUT_DATASET_PATH = f'/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}'
+RESULTS_DATASET_PATH = f'/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/CLIP_encode_results_{BATCH_NAME}'
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
 # NUM_PARALLEL_PROCESSES = 20      # Number of parallel processes (limited by DRAM and SRAM)
@@ -46,17 +55,17 @@ RESULTS_DATASET_PATH = f'/mnt/storage_ssd/v4_CLIP_encode_results_{BATCH_NAME}'  
 # NUM_GPUS = 4          # Number of physical GPUs to use (use max)
 # GPU_PER_PROCESS = 1/5 # threads per GPU, limited by OOM errors while also maximizing spread.
 
-NUM_PARALLEL_PROCESSES = 2  # Number of parallel processes (limited by DRAM and SRAM)
+NUM_PARALLEL_PROCESSES = 1  # Number of parallel processes (limited by DRAM and SRAM)
 NUM_CPU_CORES = 12  # Numer of available physical cores to use (use max!)
 NUM_GPUS = 1  # Number of physical GPUs to use (use max)
 GPU_PER_PROCESS = 1  # threads per GPU, limited by OOM errors while also maximizing spread.
-BATCH_SIZE = 40  # 30 * 2 threads. good on 11GB
+BATCH_SIZE = 30  # 30 * 2 threads. good on 11GB
 
 # rough GPU-mem per image is 22*3 / 11 = 6 images per gig.
 
 
 @ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES},
-            num_cpus=NUM_CPU_CORES / NUM_PARALLEL_PROCESSES,
+            num_cpus=math.ceil(NUM_CPU_CORES / NUM_PARALLEL_PROCESSES),
             num_gpus=NUM_GPUS / NUM_PARALLEL_PROCESSES)
 class ParallelEncode:
   '''
@@ -106,7 +115,7 @@ def main():
   ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False,
            ignore_reinit_error=True)  # , num_gpus = 1
   print_cluster_stats()
-  print(colored(f"👉 Warning always creating new dataset", "yellow", attrs=["reverse", "bold"]))
+  # print(colored(f"👉 Warning always creating new dataset", "yellow", attrs=["reverse", "bold"]))
   if os.path.exists(RESULTS_DATASET_PATH):
     print(f"Loading existing dataset from {RESULTS_DATASET_PATH}")
     ds = dl.load(RESULTS_DATASET_PATH)
@@ -167,9 +176,9 @@ def main():
   # only launch set number of workers, they all pull from the same work queue.
   all_done = ray.get([parallel_encode.parallel_clip_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)])
   print("Len of all threads: ", len(all_done))
-  print("👉 Completed, finished main().")
-
-
+  print("👉 Completed compute.")
+  return
+        
 @dl.compute
 def populate_ds_with_zeros(sample_in, sample_out):
   '''
@@ -198,7 +207,7 @@ def add_samples_to_dict(ds, do_filtering):
   start_time = time.monotonic()
 
   def add_one_sample(sample, batch, list_of_batches, total_samples):
-    metadata = json.loads(sample['segment_metadata_v2'].data()['value'])
+    metadata = json.loads(sample['segment_metadata'].data()['value'])
     seg_start_time = float(metadata['start'])
     seg_end_time = float(metadata['end'])
     midpoint = (seg_end_time + seg_start_time) / 2
@@ -256,6 +265,13 @@ def print_cluster_stats():
   if ('GPU' in str(ray.cluster_resources())):
     print(f"        {ray.cluster_resources()['GPU']} GRAPHICCSSZZ cards in total")
 
+def await_ray_task_completion():
+  print("Ensuring uploader is done before exiting.")
+  # waiting for uploader (and any other jobs) to finish.
+  while (ray.cluster_resources()['CPU'] != ray.available_resources()['CPU']):
+    print(f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}")
+    time.sleep(5)
 
 if __name__ == '__main__':
   main()
+  await_ray_task_completion()

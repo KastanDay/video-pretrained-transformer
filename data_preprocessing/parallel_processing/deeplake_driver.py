@@ -33,11 +33,12 @@ class DeeplakeManager():
     # open and persist DB connection
     self.ds = dl.load(database_path)
     print(self.ds.summary())
-
     self.upload_queue = upload_queue
+    self.start_upload_driver(preprocessor_type)
 
+  def start_upload_driver(self, preprocessor_type):
     # runs forever in background
-    ray.get(self._start_upload_driver(preprocessor_type))
+    return ray.get(self._start_upload_driver(preprocessor_type))
 
   ############################
   ##### INTERNAL METHODS #####

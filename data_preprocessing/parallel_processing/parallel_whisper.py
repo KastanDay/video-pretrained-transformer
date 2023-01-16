@@ -18,6 +18,9 @@ from deeplake_driver import DeeplakeManager
 from PIL import Image
 from ray.util.queue import Queue
 
+# TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
+os.environ["RAY_memory_monitor_refresh_ms"] = "0" # prevents ray from killing the process when it runs out of memory
+
 # pyright: reportGeneralTypeIssues=false
 # ^^ due to not understanding deeplake
 # pyright: reportPrivateImportUsage=false
@@ -28,7 +31,7 @@ BATCH_NAME = 'parallel_15'
 # WHISPER_RESULTS_DATASET_PATH        = f'/mnt/storage_ssd/whisper_results_{BATCH_NAME}'
 WHISPER_RESULTS_DATASET_PATH = f'/mnt/storage_ssd/no_compression_whisper_results_{BATCH_NAME}'
 INPUT_DATASET_PATH = f'/mnt/storage_ssd/v0_for_whisper_{BATCH_NAME}'
-BASE_DIR = '/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/'
+# BASE_DIR = '/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/'
 LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
 
 NUM_GPUS = 1
@@ -209,5 +212,16 @@ def print_cluster_stats():
     print(f"        {ray.cluster_resources()['GPU']} GRAPHICCSSZZ cards in total")
 
 
+def await_ray_task_completion():
+  '''
+  Wait for uploader (and any other jobs) to finish.
+  # optional improvement: check the `ray memory` for remining objects to be uploaded.
+  '''
+  print("Ensuring uploader is done before exiting.")
+  while (ray.cluster_resources()['CPU'] != ray.available_resources()['CPU']):
+    print(f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}")
+    time.sleep(5)
+
 if __name__ == '__main__':
   main()
+  await_ray_task_completion()

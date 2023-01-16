@@ -1,4 +1,4 @@
-print("Use env: nlp_v2")
+print("Use conda env: nlp")
 import glob
 import json
 import os
@@ -22,6 +22,9 @@ from text_encoder import FlanT5Encoder
 from tqdm import tqdm
 from transformers import T5Tokenizer
 
+# TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
+os.environ["RAY_memory_monitor_refresh_ms"] = "0" # prevents ray from killing the process when it runs out of memory
+
 # pyright: reportGeneralTypeIssues=false
 # ^^ due to not understanding deeplake
 # pyright: reportPrivateImportUsage=false
@@ -31,16 +34,22 @@ from transformers import T5Tokenizer
 # for ray OOM errors: export RAY_DISABLE_MEMORY_MONITOR=1
 GLOBAL_TOKENIZER = T5Tokenizer.from_pretrained("google/flan-t5-large")
 
-BATCH_NAME = "parallel_15"
-RESULTS_DATASET_PATH = f"/mnt/storage_ssd/v3_text_encode_results_{BATCH_NAME}"
-INPUT_DATASET_PATH = f"/mnt/storage_ssd/FULL_whisper_results_{BATCH_NAME}"
+# BATCH_NAME = "parallel_15"
+BATCH_NAME = "handpicked_downloads"
+# INPUT_DATASET_PATH = f"/mnt/storage_ssd/FULL_whisper_results_{BATCH_NAME}"
+# RESULTS_DATASET_PATH = f"/mnt/storage_ssd/v3_text_encode_results_{BATCH_NAME}"
+
+INPUT_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/no_compression_whisper_results_handpicked"
+RESULTS_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}"
 
 NUM_GPUS = 1
-NUM_PARALLEL_PROCESSES = 9
+NUM_PARALLEL_PROCESSES = 10
 NUM_CPU_CORES = 12
-BATCH_SIZE = 38
+BATCH_SIZE = 512
 
+# batch_size 38 was max on 1080ti.
 
+# TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 @ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES},
             num_cpus=NUM_CPU_CORES,
             num_gpus=NUM_GPUS)
@@ -90,7 +99,6 @@ class ParallelEncode:
           f"⏰ Time to Text-encode file: {(time.monotonic() - start)/60:.2f} minutes. (time/segment): {((time.monotonic() - start)/BATCH_SIZE):.2f} sec"
       )
 
-
 @dl.compute
 def populate_ds_with_zeros(sample_in, sample_out):
   # assert type(sample_in_caption) == str or type(sample_in_caption) == np.str_, print(f"expecting just the pure caption. got {type(sample_in_caption)}")
@@ -100,35 +108,38 @@ def populate_ds_with_zeros(sample_in, sample_out):
   sample_out.caption_embedding.append(np.zeros((len(tokenized[0]), 1024), dtype=np.float16))
   return sample_out
 
-
+def filter_completed_text_encodes(ds):
+  index_caption_pairs = []
+  print("Filtering already completed text-encodes...")
+  start_time = time.monotonic()
+  for idx, sample in tqdm(
+      enumerate(ds),
+      desc="filtering completed",
+      total=ds.max_len,
+      bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+  ):
+    try:
+      # if not done yet, add to processing queue index_caption_pairs
+      # print("WARNING THIS WILL NOT WORK BECAUSE THE EMPTY TENSORS ARE ALL -1s NOW. otherwise they're empty.")
+      if not sample.caption_embedding.numpy().any():
+        index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
+    except IndexError as e:
+      print(e)
+      traceback.print_exc()
+      # if there's an IndexError, then the caption_embedding is empty. Caused by bug in compression code.
+      index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
+  print(f"⏰ Time to filter: {((time.monotonic() - start_time)/60):.2f} minutes")
+  return index_caption_pairs
+  
 def main():
   """MAIN"""
-
   index_caption_pairs = []  # list of: {'db_index': int, 'caption': str}
   # todo: check for completed segments (that already have a caption_embedding)
   if os.path.exists(RESULTS_DATASET_PATH):
     ds = dl.load(RESULTS_DATASET_PATH)
     print(ds.summary())
-    start_time = time.monotonic()
-
-    print("Filtering already completed text-encodes...")
-    for idx, sample in tqdm(
-        enumerate(ds),
-        desc="filtering completed",
-        total=ds.max_len,
-        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
-    ):
-      try:
-        # if not done yet, add to processing queue index_caption_pairs
-        # print("WARNING THIS WILL NOT WORK BECAUSE THE EMPTY TENSORS ARE ALL -1s NOW. otherwise they're empty.")
-        if not sample.caption_embedding.numpy().any():
-          index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
-      except IndexError as e:
-        print(e)
-        traceback.print_exc()
-        # if there's an IndexError, then the caption_embedding is empty. Caused by bug in compression code.
-        index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
-    print(f"⏰ Time to filter: {((time.monotonic() - start_time)/60):.2f} minutes")
+    index_caption_pairs = filter_completed_text_encodes(ds)
+    
   else:
     # Create output database (none exists yet)
     print(colored(f"👉 Creating output database at {RESULTS_DATASET_PATH}", "cyan", attrs=["reverse", "bold"]))
@@ -142,6 +153,10 @@ def main():
       populate_ds_with_zeros().eval(output_ds, scheduler="ray", num_workers=NUM_PARALLEL_PROCESSES, skip_ok=True)
       print("Output ds after prepopulating")
       print(output_ds.summary())
+      # print(colored(f"TODO: I need to write code to populate index_caption_pairs", "red", attrs=["reverse", "bold"]))
+    index_caption_pairs = filter_completed_text_encodes(ds)
+      
+      
 
   if len(index_caption_pairs) == 0:
     print(colored(f"No new captions to encode. Exiting!", "green", attrs=["reverse", "bold"]))
@@ -200,5 +215,16 @@ def print_cluster_stats():
 #   with jsonlines.open(empty_filepath, mode="a") as writer:
 #     writer.write({"video_filepath": failed_file_json_object})
 
-if __name__ == "__main__":
+def await_ray_task_completion():
+  '''
+  Wait for uploader (and any other jobs) to finish.
+  # optional improvement: check the `ray memory` for remining objects to be uploaded.
+  '''
+  print("Ensuring uploader is done before exiting.")
+  while (ray.cluster_resources()['CPU'] != ray.available_resources()['CPU']):
+    print(f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}")
+    time.sleep(5)
+
+if __name__ == '__main__':
   main()
+  await_ray_task_completion()
