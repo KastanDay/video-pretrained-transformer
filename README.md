@@ -29,6 +29,8 @@ sudo apt update && sudo apt install ffmpeg
 -OR-
 # conda method is not as well tested for this project
 conda install -c conda-forge -y ffmpeg
+# An update command might be necessary to get all of ffmpeg's codec-specifc extensions, which we need. 
+conda update ffmpeg
 ```
 
 3. Clone the repo with our custom submodules
