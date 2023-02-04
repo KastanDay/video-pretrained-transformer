@@ -1,4 +1,4 @@
-print("Use conda env: nlp")
+print("Use conda env: vpt")
 import glob
 import json
 import os
@@ -23,7 +23,7 @@ from tqdm import tqdm
 from transformers import T5Tokenizer
 
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
-os.environ["RAY_memory_monitor_refresh_ms"] = "0" # prevents ray from killing the process when it runs out of memory
+os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
 
 # pyright: reportGeneralTypeIssues=false
 # ^^ due to not understanding deeplake
@@ -39,19 +39,22 @@ BATCH_NAME = "handpicked_downloads"
 # INPUT_DATASET_PATH = f"/mnt/storage_ssd/FULL_whisper_results_{BATCH_NAME}"
 # RESULTS_DATASET_PATH = f"/mnt/storage_ssd/v3_text_encode_results_{BATCH_NAME}"
 
-INPUT_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/no_compression_whisper_results_handpicked"
-RESULTS_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}"
+INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/deeplake_handpicked/no_compression_whisper_results_handpicked"
+RESULTS_DATASET_PATH = f"/mnt/teton/vpt/data/deeplake_handpicked/feb_4_text_encode_results_{BATCH_NAME}"
+# INPUT_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/no_compression_whisper_results_handpicked"
+# RESULTS_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}"
 
 NUM_GPUS = 1
-NUM_PARALLEL_PROCESSES = 10
-NUM_CPU_CORES = 12
+NUM_PARALLEL_PROCESSES = 16
+NUM_CPU_CORES = 16
 BATCH_SIZE = 512
 
 # batch_size 38 was max on 1080ti.
 
+
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 @ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES},
-            num_cpus=0,
+            num_cpus=NUM_CPU_CORES,
             num_gpus=NUM_GPUS)
 class ParallelEncode:
   """
@@ -63,20 +66,31 @@ class ParallelEncode:
   def __init__(self, work_to_do_list=None):
     # Every parallel_caption_extraction writes to this queue. Then the uploader pulls from it. Magic.
     self.upload_queue = Queue()
+    self.work_queue = Queue()
     self.db_manager = DeeplakeManager.remote(preprocessor_type="text-encode",
                                              database_path=RESULTS_DATASET_PATH,
                                              upload_queue=self.upload_queue)
+    return
 
-    self.work_queue = Queue()
-    # self.populate_work_queue.remote(work_to_do_list)  # non-blocking
-    for batch in work_to_do_list:
-      self.work_queue.put(batch)
+  @ray.method(num_returns=1)
+  def populate_work_queue(self,):
+    print('starting queue')
+    ds = dl.load(RESULTS_DATASET_PATH)
+    print('ds loaded in queue')
+    max_len = ds.max_len
+    for i, sample in enumerate(ds):
+      if not sample.done_text_encode.data()['value']:
+        self.work_queue.put({'caption': sample.caption.text(), 'db_index': i})
+      if i % 100 == 0:
+        print(f"📌 {self.work_queue.qsize()} batches. Still adding more...")
+    print("DONE POPULATING WORK QUEUE!")
+    return 0
 
   @ray.method(concurrency_group="parallel_whisper_instances")
   def parallel_text_encode(self):
     """
-        Main function for parallel whisper.
-        """
+    Main function for parallel whisper.
+    """
     process = FlanT5Encoder()
     while self.work_queue.qsize() > 0:
       start = time.monotonic()
@@ -86,18 +100,22 @@ class ParallelEncode:
         # returns: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
         last_hidden_states_batch = process.encode(batch)
         caption_embed_dict_list = []
-        for input_batch_item, embed in zip(batch, last_hidden_states_batch):
-          caption_embed_dict_list.append({"db_index": input_batch_item["db_index"], "last_hidden_states": embed})
+        for embed in last_hidden_states_batch:
+          caption_embed_dict_list.append({
+              "db_index": embed["db_index"],
+              "last_hidden_states": embed["last_hidden_states"]
+          })
         ## ADD TO DATASET (via upload queue)
         self.upload_queue.put(caption_embed_dict_list)
         # print("Added to Queue!")
       except Exception as e:
         print("❌❌Error during text-encode: ", e)
         traceback.print_exc()
-        pprint.pprint(caption_embed_dict_list)
+        # pprint.pprint(caption_embed_dict_list)
       print(
           f"⏰ Time to Text-encode file: {(time.monotonic() - start)/60:.2f} minutes. (time/segment): {((time.monotonic() - start)/BATCH_SIZE):.2f} sec"
       )
+
 
 @dl.compute
 def populate_ds_with_zeros(sample_in, sample_out):
@@ -108,29 +126,45 @@ def populate_ds_with_zeros(sample_in, sample_out):
   sample_out.caption_embedding.append(np.zeros((len(tokenized[0]), 1024), dtype=np.float16))
   return sample_out
 
-def filter_completed_text_encodes(ds):
-  index_caption_pairs = []
-  print("Filtering already completed text-encodes...")
-  start_time = time.monotonic()
-  for idx, sample in tqdm(
-      enumerate(ds),
-      desc="filtering completed",
-      total=ds.max_len,
-      bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
-  ):
-    try:
-      # if not done yet, add to processing queue index_caption_pairs
-      # print("WARNING THIS WILL NOT WORK BECAUSE THE EMPTY TENSORS ARE ALL -1s NOW. otherwise they're empty.")
-      if not sample.caption_embedding.numpy().any():
-        index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
-    except IndexError as e:
-      print(e)
-      traceback.print_exc()
-      # if there's an IndexError, then the caption_embedding is empty. Caused by bug in compression code.
-      index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
-  print(f"⏰ Time to filter: {((time.monotonic() - start_time)/60):.2f} minutes")
-  return index_caption_pairs
-  
+
+# def filter_completed_text_encodes(ds):
+#   index_caption_pairs = []
+#   print("Filtering already completed text-encodes...")
+#   start_time = time.monotonic()
+#   for idx, sample in tqdm(
+#       enumerate(ds),
+#       desc="filtering completed",
+#       total=ds.max_len,
+#       bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+#   ):
+#     try:
+#       # if not done yet, add to processing queue index_caption_pairs
+#       # print("WARNING THIS WILL NOT WORK BECAUSE THE EMPTY TENSORS ARE ALL -1s NOW. otherwise they're empty.")
+#       if not sample.caption_embedding.numpy().any():
+#         index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
+#     except IndexError as e:
+#       print(e)
+#       traceback.print_exc()
+#       # if there's an IndexError, then the caption_embedding is empty. Caused by bug in compression code.
+#       index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
+#   print(f"⏰ Time to filter: {((time.monotonic() - start_time)/60):.2f} minutes")
+#   return index_caption_pairs
+
+# def parallel_filter_completed_text_encodes(sample_in, sample_out):
+#   index_caption_pairs = []
+#   try:
+#     # if not done yet, add to processing queue index_caption_pairs
+#     if not sample_in.caption_embedding.numpy().any():
+#       index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
+#   except IndexError as e:
+#     print(e)
+#     traceback.print_exc()
+#     # if there's an IndexError, then the caption_embedding is empty. Caused by bug in compression code.
+#     index_caption_pairs.append({"db_index": idx, "caption": sample.caption.data()["value"]})
+#   print(f"⏰ Time to filter: {((time.monotonic() - start_time)/60):.2f} minutes")
+#   return index_caption_pairs
+
+
 def main():
   """MAIN"""
   index_caption_pairs = []  # list of: {'db_index': int, 'caption': str}
@@ -138,59 +172,72 @@ def main():
   if os.path.exists(RESULTS_DATASET_PATH):
     ds = dl.load(RESULTS_DATASET_PATH)
     print(ds.summary())
-    index_caption_pairs = filter_completed_text_encodes(ds)
-    
+    # index_caption_pairs = filter_completed_text_encodes(ds)
+
   else:
     # Create output database (none exists yet)
     print(colored(f"👉 Creating output database at {RESULTS_DATASET_PATH}", "cyan", attrs=["reverse", "bold"]))
     output_ds = dl.deepcopy(INPUT_DATASET_PATH, RESULTS_DATASET_PATH, overwrite=True)
     with output_ds:
+      # tf_bfloat16 = _pywrap_bfloat16.TF_bfloat16_type() # couldn't get this working weird imports.
       output_ds.create_tensor("caption_embedding", htype="generic", dtype=np.float16, sample_compression=None)
+      output_ds.create_tensor("done_text_encode", htype="generic", dtype=bool, sample_compression=None)
       output_ds.caption_embedding.extend([np.float16(0)] * output_ds.max_len)  # make equal size (fastest way)
+      output_ds.done_text_encode.extend([False] * output_ds.max_len)  # set all to false (fastest way)
       output_ds.flush()
     with output_ds:
       print("Prepopulating `caption_embedding` tensor with custom-tokenized np.zeros((custom_token_len, 1024).")
+      print(output_ds.summary())
       populate_ds_with_zeros().eval(output_ds, scheduler="ray", num_workers=NUM_PARALLEL_PROCESSES, skip_ok=True)
       print("Output ds after prepopulating")
       print(output_ds.summary())
       # print(colored(f"TODO: I need to write code to populate index_caption_pairs", "red", attrs=["reverse", "bold"]))
-    index_caption_pairs = filter_completed_text_encodes(ds)
-      
-      
 
-  if len(index_caption_pairs) == 0:
-    print(colored(f"No new captions to encode. Exiting!", "green", attrs=["reverse", "bold"]))
-    exit()
-  else:
-    print(
-        colored(
-            f"👉 Starting to encode these text-captions: {len(index_caption_pairs)}",
-            "cyan",
-            attrs=["reverse", "bold"],
-        ))
+    # parallel_filter_completed_text_encodes().eval(output_ds,
+    #                                               scheduler="ray",
+    #                                               num_workers=NUM_PARALLEL_PROCESSES,
+    #                                               skip_ok=True)
+    # index_caption_pairs = filter_completed_text_encodes(output_ds)
 
-  # create batches of length BATCH_SIZE
-  if BATCH_SIZE == 1:
-    batches = [index_caption_pairs]
-  else:
-    batches = list(more_itertools.chunked(index_caption_pairs, BATCH_SIZE))
-  print("Num batches: ", len(batches))
+  # if len(index_caption_pairs) == 0:
+  #   print(colored(f"No new captions to encode. Exiting!", "green", attrs=["reverse", "bold"]))
+  #   exit()
+  # else:
+  #   print(
+  #       colored(
+  #           f"👉 Starting to encode these text-captions: {len(index_caption_pairs)}",
+  #           "cyan",
+  #           attrs=["reverse", "bold"],
+  #       ))
 
-  print(
-      colored(
-          f"TODO: 👉 Ensure that I'm only keeping hidden states that are non-padding tokens",
-          "yellow",
-          attrs=["reverse", "bold"],
-      ))
+  # create batches of length BATCH_SIZE --- SHOULD ADD THIS BACK IN.
+  # if BATCH_SIZE == 1:
+  #   batches = [index_caption_pairs]
+  # else:
+  #   batches = list(more_itertools.chunked(index_caption_pairs, BATCH_SIZE))
+  # print("Num batches: ", len(batches))
 
-  print("Starting parallel batches")
+  # print(
+  #     colored(
+  #         f"TODO: 👉 Ensure that I'm only keeping hidden states that are non-padding tokens",
+  #         "yellow",
+  #         attrs=["reverse", "bold"],
+  #     ))
+
   ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False,
            ignore_reinit_error=True)  # , num_gpus = 1
   print_cluster_stats()
 
-  parallel_encode = ParallelEncode.remote(work_to_do_list=batches)
   # only launch set number of workers, they all pull from the same work queue.
-  all_done = ray.get([parallel_encode.parallel_text_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)])
+  parallel_encode = ParallelEncode.remote()
+  print("Starting upload queue")
+  populate_work_queue_future = parallel_encode.populate_work_queue.remote()
+  time.sleep(10)  # wait for jobs to be ready, then start text encoder
+  print("Starting parallel batches")
+  all_done_futures = [parallel_encode.parallel_text_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)]
+  all_done = ray.get(all_done_futures)
+  all_done.append(ray.get(populate_work_queue_future))
+
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
   return 0
@@ -215,6 +262,7 @@ def print_cluster_stats():
 #   with jsonlines.open(empty_filepath, mode="a") as writer:
 #     writer.write({"video_filepath": failed_file_json_object})
 
+
 def await_ray_task_completion():
   '''
   Wait for uploader (and any other jobs) to finish.
@@ -222,8 +270,11 @@ def await_ray_task_completion():
   '''
   print("Ensuring uploader is done before exiting.")
   while (ray.cluster_resources()['CPU'] != ray.available_resources()['CPU']):
-    print(f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}")
+    print(
+        f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}"
+    )
     time.sleep(5)
+
 
 if __name__ == '__main__':
   main()
