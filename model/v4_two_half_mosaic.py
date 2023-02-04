@@ -14,22 +14,24 @@ pyright: reportOptionalCall=false
 import os
 import subprocess
 import traceback
-import subprocess
 
+import composer
 import deeplake as dl
 import lovely_tensors as lt
 import numpy as np
 import torch
 import transformers
 import wandb
-from composer import Trainer
+from composer import Time, Trainer, optim
+from composer.algorithms import Alibi, FusedLayerNorm
 from composer.loggers import WandBLogger
 from composer.models import HuggingFaceModel
+from composer.profiler import JSONTraceHandler, cyclic_schedule
+from composer.profiler.profiler import Profiler
 from modeling_vpt_in_mosaicml import VPT_model  # original work
 from termcolor import colored
-from tqdm import tqdm
-import transformers
 
+# print("after imports")
 lt.monkey_patch()
 
 # device = "cpu"
@@ -52,27 +54,44 @@ elif 'dgx' in hostname:
 elif 'hal' in hostname:
   print("Hostname: HAL")
   BASE_DIR = '~/thesis/VPT_data/'
+elif '103ai' in hostname:
+  print("Hostname: 103ai, EPYC")
+  # BASE_DIR = '/mnt/teton/vpt/data/'
+  # BASE_DIR = '/mnt/teton/vpt/data/deeplake_parallel_15/'
+  BASE_DIR = '/mnt/teton/vpt/data/deeplake_handpicked/'
 
 # hyperparams
-MODEL_VERSION_NAME = 'mosaic_yt_pretrain_half_half'
+MODEL_VERSION_NAME = 'feb_4_mosaic_yt_pretrain_half_half_handpicked'
 learning_rate = 1e-4  # recc for t5: 1e-4 and 3e-4
-BATCH_NAME = "parallel_15"
+BATCH_NAME = "handpicked_downloads"
 MODEL_SAVE_PATH = f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}'
 # DATABASE_FILEPATH = f'{BASE_DIR}/v4_CLIP_encode_results_{BATCH_NAME}'
-DATABASE_FILEPATH = f'{BASE_DIR}/shorter_v4_CLIP_encode_results_{BATCH_NAME}'
+DATABASE_FILEPATH = f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}'
 
 
 def main():
   # create dataloader
   ds = dl.load(DATABASE_FILEPATH)
   columns_for_training = ['clip_pooled_embedding', 'caption_embedding', 'clip_last_hidden_states', 'caption']
-  train_dataloader = ds.pytorch(tensors=columns_for_training,
-                                transform=my_dataloader_batching_transform,
-                                num_workers=0,
-                                batch_size=1,
-                                pin_memory=False,
-                                shuffle=False,
-                                drop_last=False)
+
+  # todo: remove all mention of cuda from this functino (no .todevice), then use pin=True.
+  train_dataloader = ds.pytorch(
+      tensors=columns_for_training,
+      transform=my_dataloader_batching_transform,
+      num_workers=0,  # why can't I change this... 
+      batch_size=1,
+      pin_memory=False,
+      shuffle=False,
+      drop_last=False,
+      use_local_cache=True,
+  )
+
+  # todo: use c++ dataloader "deeplake[enterprise]"
+  # train_loader = ds.dataloader()\
+  #              .transform(transform)\
+  #              .batch(32)\
+  #              .shuffle(True)\
+  #              .pytorch(tensors=['images', 'labels'], num_workers = 8)
 
   # run training with our model
   # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
@@ -127,9 +146,18 @@ def main():
       'verbose': True
   }
 
-  # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
-  # todo: implement model saving
-  # todo: implement LR scheduler.... cosine decay with warmup.
+  cosine_lr_schedule = optim.CosineAnnealingWithWarmupScheduler(t_warmup=Time.from_sample(2000))
+
+  # alibi attention https://docs.mosaicml.com/en/v0.11.1/method_cards/alibi.html
+  # only directly supported for GPT and BERT.
+  # alibi = Alibi(
+  #     max_sequence_length=1024,
+  #     train_sequence_length_scaling=0.25,
+  # )
+
+  # Instantiate the trainer
+  composer_trace_dir = 'composer_profiler'
+  torch_trace_dir = 'torch_profiler'
 
   # trainer_device = 'cpu'
   trainer_device = 'gpu'
@@ -139,23 +167,37 @@ def main():
       train_dataloader=train_dataloader,
       eval_dataloader=train_dataloader,
       optimizers=optimizer,
-      max_duration=3,  # epochs 
+      max_duration=3,  # epochs
       device=trainer_device,  # "gpu" if torch.cuda.is_available() else "cpu",
       run_name=f'{MODEL_VERSION_NAME}',
       save_folder=f"{BASE_DIR}/{MODEL_VERSION_NAME}/checkpoints",
-      save_interval="500ba",  # 2k batches
-      save_num_checkpoints_to_keep=5,
-      # grad_accum=1,
-      # eval_interval=100,
+      save_interval="1000ba",  # 2k batches
+      save_num_checkpoints_to_keep=2,
+      schedulers=[cosine_lr_schedule],
+      # algorithms=[alibi],  # FusedLayerNorm() -- use NGC
       loggers=[wandb_logger],
-      precision='fp32',
+      # grad_accum=10, # requires multiple GPUs I guess
+      device_train_microbatch_size='auto',
+      # eval_interval=0,
+      precision='amp_bf16',  # working: fp32
       # fsdp_config=fsdp_config,
-      # overwrite=True,  # existing checkpoints overwritten
       # save_folder="s3://my-bucket/{run_name}/checkpoints",
       # save_filename="ep{epoch}.pt",
-      # save_overwrite=True,
-      load_path=
-      "/raid/projects/kastan/mosaic_yt_pretrain_half_half/checkpoints/latest-rank0.pt",  # resume from checkpoint
+      save_overwrite=True,
+      # load_path=
+      # "/raid/projects/kastan/mosaic_yt_pretrain_half_half/checkpoints/latest-rank0.pt",  # resume from checkpoint
+      # train_subset_num_batches=16,
+      # profiler=Profiler(
+      #     trace_handlers=[JSONTraceHandler(folder=composer_trace_dir, overwrite=True)],
+      #     schedule=cyclic_schedule(
+      #         wait=0,
+      #         warmup=1,
+      #         active=4,
+      #         repeat=1,
+      #     ),
+      #     torch_prof_folder=torch_trace_dir,
+      #     torch_prof_overwrite=True,
+      # ),
       seed=42)
   trainer.fit()
 
@@ -168,8 +210,8 @@ t5_tokenizer = T5Tokenizer.from_pretrained(model_huggingface_name, return_specia
 def my_dataloader_batching_transform(segment_batch):
   '''
   param: segment_batch: IterableOrderedDict. 1 SEGMENT (not batch_size, just one).
-  We put a bunch of these together to get a btach. 
-  
+  We put a bunch of these together to get a btach.
+
   returns: batch dictionary.  Keys: input_embeds_arr, attn_mask_arr, labels_tokenized
                               Values: batched Torch Tensors of shape <1, 1024, 1024>. These are stacked to create a batch.
   '''
@@ -217,6 +259,7 @@ def my_dataloader_batching_transform(segment_batch):
       else:
         batch[key] = torch.from_numpy(numpy_array).to(device)
 
+    # todo; clean this up IDK what exactly the labels look like.
     elif key == 'caption':
       caption = numpy_array[0]  # passed in as a single-element list.
       # print("⭐️4️⃣ CAPTION")

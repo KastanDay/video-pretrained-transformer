@@ -36,7 +36,13 @@ class VPT_model(ComposerModel):
     Docs: https://docs.mosaicml.com/en/v0.11.1/api_reference/generated/composer.ComposerModel.html#composer.ComposerModel.eval_forward
     todo: Placeholder so that training doesn't crash.
     '''
+    # call model.generate(inputs_embeds=input_embeds_arr, attention_mask=batch['attn_mask_arr']), same as in forward.
+    # what is in labels? labels=batch['labels']
     return 0
+
+  # todo:
+  # def get_metrics(self, is_train: bool) -> Dict[str, Metric]:
+  #   return
 
   def loss(self, outputs, batch):
     '''
