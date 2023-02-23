@@ -121,7 +121,8 @@ def main():
         init_kwargs={
             "config": {
                 'learning_rate': learning_rate,
-                # 'batch_name': BATCH_NAME,
+                'batch_name': BATCH_NAME,
+                'dataset_path': DATABASE_FILEPATH,
                 'model_save_path': MODEL_SAVE_PATH,
             },
             "entity": "kastan",

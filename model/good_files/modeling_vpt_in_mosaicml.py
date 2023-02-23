@@ -78,7 +78,9 @@ class VPT_model(ComposerModel):
         '''
         Return loss from huggingface model outputs.
         Docs'''
-        return outputs[0].sum()
+        loss = outputs[0].sum()
+        wandb.log({"train_loss": loss})
+        return loss
 
     # todo: not necessary?
     # def metrics(self, train: bool = False):
