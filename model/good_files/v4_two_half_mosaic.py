@@ -38,6 +38,7 @@ lt.monkey_patch()
 print("CPU count:", psutil.cpu_count())
 # device = "cpu"
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
+composer_trainer_device = "gpu" if torch.cuda.is_available() else "cpu"
 print("Running on:", device)
 
 result = subprocess.run(["hostname"], capture_output=True, text=True)
@@ -54,14 +55,19 @@ elif 'dgx' in hostname:
   BASE_DIR = '/raid/projects/kastan'
 elif 'hal' in hostname:
   print("Hostname: HAL")
-  BASE_DIR = '~/thesis/VPT_data/'
+  BASE_DIR = '~/thesis/VPT_data'
 elif '103ai' in hostname:
   print("Hostname: 103ai, EPYC")
-  # BASE_DIR = '/mnt/teton/vpt/data/'
-  # BASE_DIR = '/mnt/teton/vpt/data/deeplake_parallel_15/'
-  BASE_DIR = '/mnt/teton/vpt/data/deeplake_handpicked/'
+  # BASE_DIR = '/mnt/teton/vpt/data/deeplake_parallel_15'
+  BASE_DIR = '/mnt/teton/vpt/data/deeplake_handpicked'
 
-# MANUAL PARAMS
+##### MANUAL PARAMS #####
+'''
+hyperparam experiments:
+1. model name: google/t5-large, google/t5-v1_1-large, google/flan-t5-large
+2. learning rate
+3. cosine annealing lr scheduler (warmup... and max lr)?
+'''
 learning_rate = 1e-4  # recc for t5: 1e-4 and 3e-4
 batch_size = 1
 model_huggingface_name = "google/t5-v1_1-large"
@@ -78,7 +84,6 @@ def main():
   ds = dl.load(DATABASE_FILEPATH)
   columns_for_training = ['clip_pooled_embedding', 'caption_embedding', 'clip_last_hidden_states', 'caption']
 
-  # todo: remove all mention of cuda from this functino (no .todevice), then use pin=True.
   train_dataloader = ds.pytorch(
       tensors=columns_for_training,
       transform=vpt_transform_dataset_to_batch,
@@ -90,19 +95,10 @@ def main():
       use_local_cache=False,  # downloads to ~/.deeplake, good when using S3.
   )
 
-  # todo: use c++ dataloader "deeplake[enterprise]"
-  # train_loader = ds.dataloader()\
-  #              .transform(transform)\
-  #              .batch(32)\
-  #              .shuffle(True)\
-  #              .pytorch(tensors=['images', 'labels'], num_workers = 8)
-
-  # run training with our model
   # todo: implement evaluation or something on a holdout/validation set. Maybe yt1b val.
   model = VPT_model(model_huggingface_name=model_huggingface_name, model_version_name=MODEL_VERSION_NAME)
 
-  # adafactor setup as suggested here: https://discuss.huggingface.co/t/t5-finetuning-tips/684/3
-  # todo: Critically implement LR warmup if using adafactor.
+  # todo: Maybe Adafactor is the better optimizer? See discussion https://discuss.huggingface.co/t/t5-finetuning-tips/684/3
   # Training without LR warmup or clip_threshold is not recommended.
   # use scheduled LR warm-up to fixed LR
   # FOR EX:
@@ -111,10 +107,6 @@ def main():
   # lr_scheduler = AdafactorSchedule(optimizer)
   # optimizer = transformers.Adafactor(params=model.parameters(), lr=0.001, scale_parameter=False, relative_step=False)
   # fsdp_config['min_params']
-
-  # all params are fp32
-  # for param in model.parameters():
-  #   print(param.dtype)
 
   optimizer = torch.optim.AdamW(params=model.parameters(), lr=learning_rate)  # Typically, 1e-4 and 3e-4 work well for most problems
   wandb_logger = WandBLogger(
@@ -163,33 +155,34 @@ def main():
   composer_trace_dir = 'composer_profiler'
   torch_trace_dir = 'torch_profiler'
 
-  # trainer_device = 'cpu'
-  trainer_device = 'gpu'
-  print(f"Running Trainer on {trainer_device}")
   trainer = Trainer(
       model=model,
       train_dataloader=train_dataloader,
       eval_dataloader=train_dataloader,
       optimizers=optimizer,
       max_duration=3,  # epochs
-      device=trainer_device,  # "gpu" if torch.cuda.is_available() else "cpu",
+      device=composer_trainer_device,
       run_name=f'{MODEL_VERSION_NAME}',
       save_folder=f"{BASE_DIR}/{MODEL_VERSION_NAME}/checkpoints",
       save_interval="1000ba",  # 2k batches
+      # save_filename="ep{epoch}.pt",
       save_num_checkpoints_to_keep=2,
       schedulers=[cosine_lr_schedule],
-      # algorithms=[alibi],  # FusedLayerNorm() -- use NGC
       loggers=[wandb_logger],
-      # grad_accum=10, # requires multiple GPUs I guess
       device_train_microbatch_size='auto',
+      precision='amp_bf16',  # also works: fp32
       # eval_interval=0,
-      precision='amp_bf16',  # working: fp32
+
+      # grad_accum=10, # requires multiple GPUs I guess
+      # algorithms=[alibi],  # FusedLayerNorm() -- use NGC
       # fsdp_config=fsdp_config,
-      # save_folder="s3://my-bucket/{run_name}/checkpoints",
-      # save_filename="ep{epoch}.pt",
+
+      # ----------- RESUME FROM CHECKPOINT -----------
       save_overwrite=True,
       # load_path=f"{MODEL_SAVE_PATH}/latest-rank0.pt",  # resume from checkpoint
       # "/raid/projects/kastan/mosaic_yt_pretrain_half_half/checkpoints/latest-rank0.pt",  # resume from checkpoint
+
+      # ----------- PROFILE -----------
       # train_subset_num_batches=16,
       # profiler=Profiler(
       #     trace_handlers=[JSONTraceHandler(folder=composer_trace_dir, overwrite=True)],

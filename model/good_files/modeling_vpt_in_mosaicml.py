@@ -9,7 +9,7 @@ from composer.models import ComposerModel, HuggingFaceModel
 from datasets import load_metric
 from termcolor import colored
 from torchmetrics import Metric, MetricCollection
-from transformers import (AutoModelWithLMHead, T5ForConditionalGeneration, T5Tokenizer)
+from transformers import (AutoModelForSeq2SeqLM, AutoTokenizer, T5ForConditionalGeneration, T5Tokenizer)
 
 
 class VPT_model(ComposerModel):
@@ -21,8 +21,8 @@ class VPT_model(ComposerModel):
   def __init__(self, model_version_name: str = '', model_save_path: str = '', model_huggingface_name: str = "google/t5-v1_1-large"):
     super().__init__()
 
-    self.model = T5ForConditionalGeneration.from_pretrained(model_huggingface_name)  #.to(self.device)
-    self.t5_tokenizer = T5Tokenizer.from_pretrained(model_huggingface_name, return_special_tokens_mask=True)
+    self.model = AutoModelForSeq2SeqLM.from_pretrained(model_huggingface_name)  #.to(self.device)
+    self.t5_tokenizer = AutoTokenizer.from_pretrained(model_huggingface_name, return_special_tokens_mask=True)
     # self.model.train()  -- already done by compser I think.
 
     # I got this vocab size from outputs.logits (it's rounded up from tokenizer.vocab_size)
@@ -107,13 +107,8 @@ def log_gradient_norm():
     print("Failed to log gradient norm: ", e)
 '''
 
-from transformers import T5Tokenizer
 
-model_huggingface_name = "google/t5-v1_1-large"
-t5_tokenizer = T5Tokenizer.from_pretrained(model_huggingface_name, return_special_tokens_mask=True)
-
-
-def vpt_transform_dataset_to_batch(segment_batch):
+def vpt_transform_dataset_to_batch(segment_batch, tokenizer_name: str):
   '''
   param: segment_batch: IterableOrderedDict. 1 SEGMENT (not batch_size, just one).
   The dataloader controls batch size, this just returns a single batch.
@@ -132,6 +127,8 @@ def vpt_transform_dataset_to_batch(segment_batch):
   # device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
   # print("👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉 SEGMENT BATCH", flush=True)
   batch = {}  # keys: input_embeds_arr, attn_mask_arr, labels
+
+  tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, return_special_tokens_mask=True)
 
   # maybe don't loop here??? just do it once. Not sure how it works on ds.batch_size setting.
   # Loop over BATCH_SIZE. Create dictionary where key = name, value = batched tensor
@@ -180,7 +177,7 @@ def vpt_transform_dataset_to_batch(segment_batch):
       caption = numpy_array[0]  # passed in as a single-element list.
       # print("⭐️4️⃣ CAPTION")
       # print(caption)
-      full_caption_tokenized = t5_tokenizer(caption, padding=False, truncation=True, return_tensors="pt").input_ids
+      full_caption_tokenized = tokenizer(caption, padding=False, truncation=True, return_tensors="pt").input_ids
       caption_length = full_caption_tokenized.shape[1]
       s_half = caption_length // 2
       # only keep 2nd half of caption to use as labels.
