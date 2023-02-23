@@ -25,8 +25,8 @@ from termcolor import colored
 class DeeplakeManager():
 
   def __init__(self, preprocessor_type=None, database_path=None, upload_queue=None):
-    assert preprocessor_type in ['whisper', 'clip', 'text-encode'
-                                ], "only these modes are supported. Due to custom upload function for each."
+    assert preprocessor_type in ['whisper', 'clip',
+                                 'text-encode'], "only these modes are supported. Due to custom upload function for each."
 
     ray.init('auto', ignore_reinit_error=True)  # todo: connect to existing ray cluster...
 
@@ -49,8 +49,8 @@ class DeeplakeManager():
     The __init__() calls this function to upload data to Deeplake database. Upload is done in background.
     '''
     print("Started the forever upload driver...")
-    assert preprocessor_type in ['whisper', 'clip', 'text-encode'
-                                ], "only these modes are supported. Due to custom upload function for each."
+    assert preprocessor_type in ['whisper', 'clip',
+                                 'text-encode'], "only these modes are supported. Due to custom upload function for each."
     if preprocessor_type == 'whisper':
       while True:  # continuously check upload queue
         self._whisper_results_to_deeplake()
@@ -101,8 +101,7 @@ class DeeplakeManager():
 
           first_idx, last_idx = results['db_indexes'][0], results['db_indexes'][-1]
           last_idx = last_idx + 1  # Is this right?
-          assert check_continuity(
-              results['db_indexes']), print("db_inxexes must be continuous. This batch is not contiguous in Deeplake.")
+          assert check_continuity(results['db_indexes']), print("db_inxexes must be continuous. This batch is not contiguous in Deeplake.")
           assert last_idx - first_idx == (len(results['frames'])), print(
               f"Length of frames {len(results['frames'])} must equal {last_idx}-{first_idx} = {last_idx - first_idx}")
           self.ds.clip_pooled_embedding[first_idx:last_idx] = results['pooled_clip_embeds']

@@ -53,9 +53,7 @@ BATCH_SIZE = 512
 
 
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
-@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES},
-            num_cpus=NUM_CPU_CORES,
-            num_gpus=NUM_GPUS)
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS)
 class ParallelEncode:
   """
   Parallel actor. Degree of Parallelism = NUM_PARALLEL_PROCESSES
@@ -101,10 +99,7 @@ class ParallelEncode:
         last_hidden_states_batch = process.encode(batch)
         caption_embed_dict_list = []
         for embed in last_hidden_states_batch:
-          caption_embed_dict_list.append({
-              "db_index": embed["db_index"],
-              "last_hidden_states": embed["last_hidden_states"]
-          })
+          caption_embed_dict_list.append({"db_index": embed["db_index"], "last_hidden_states": embed["last_hidden_states"]})
         ## ADD TO DATASET (via upload queue)
         self.upload_queue.put(caption_embed_dict_list)
         # print("Added to Queue!")
@@ -224,8 +219,7 @@ def main():
   #         attrs=["reverse", "bold"],
   #     ))
 
-  ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False,
-           ignore_reinit_error=True)  # , num_gpus = 1
+  ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False, ignore_reinit_error=True)  # , num_gpus = 1
   print_cluster_stats()
 
   # only launch set number of workers, they all pull from the same work queue.
@@ -271,8 +265,7 @@ def await_ray_task_completion():
   print("Ensuring uploader is done before exiting.")
   while (ray.cluster_resources()['CPU'] != ray.available_resources()['CPU']):
     print(
-        f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}"
-    )
+        f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}")
     time.sleep(5)
 
 

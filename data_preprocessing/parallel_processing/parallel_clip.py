@@ -4,12 +4,12 @@ os.environ['TRANSFORMERS_CACHE'] = '/tmp/huggingface_cache'  # must be first
 
 import inspect
 import json
+import math
 import pathlib
 import pprint
 import sys
 import time
 import traceback
-import math 
 
 import deeplake as dl
 import jsonlines
@@ -23,7 +23,7 @@ from termcolor import colored
 from tqdm import tqdm
 
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
-os.environ["RAY_memory_monitor_refresh_ms"] = "0" # prevents ray from killing the process when it runs out of memory
+os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
 
 # pyright: reportGeneralTypeIssues=false
 # ^^ due to not understanding deeplake
@@ -35,7 +35,6 @@ global NUM_PARALLEL_PROCESSES
 global NUM_CPU_CORES
 global NUM_GPUS
 global GPU_PER_PROCESS
-
 
 # datasets
 # BATCH_NAME = 'parallel_15'
@@ -78,9 +77,7 @@ class ParallelEncode:
 
     # Every parallel_caption_extraction writes to this queue. Then the uploader pulls from it. Magic.
     self.upload_queue = Queue()
-    self.db_manager = DeeplakeManager.remote(preprocessor_type='clip',
-                                             database_path=RESULTS_DATASET_PATH,
-                                             upload_queue=self.upload_queue)
+    self.db_manager = DeeplakeManager.remote(preprocessor_type='clip', database_path=RESULTS_DATASET_PATH, upload_queue=self.upload_queue)
 
     self.batches_to_do_queue = Queue()
     for batch in work_to_do_list:
@@ -112,8 +109,7 @@ class ParallelEncode:
 
 def main():
   """ MAIN """
-  ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False,
-           ignore_reinit_error=True)  # , num_gpus = 1
+  ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False, ignore_reinit_error=True)  # , num_gpus = 1
   print_cluster_stats()
   # print(colored(f"👉 Warning always creating new dataset", "yellow", attrs=["reverse", "bold"]))
   if os.path.exists(RESULTS_DATASET_PATH):
@@ -178,7 +174,8 @@ def main():
   print("Len of all threads: ", len(all_done))
   print("👉 Completed compute.")
   return
-        
+
+
 @dl.compute
 def populate_ds_with_zeros(sample_in, sample_out):
   '''
@@ -265,12 +262,15 @@ def print_cluster_stats():
   if ('GPU' in str(ray.cluster_resources())):
     print(f"        {ray.cluster_resources()['GPU']} GRAPHICCSSZZ cards in total")
 
+
 def await_ray_task_completion():
   print("Ensuring uploader is done before exiting.")
   # waiting for uploader (and any other jobs) to finish.
   while (ray.cluster_resources()['CPU'] != ray.available_resources()['CPU']):
-    print(f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}")
+    print(
+        f"Uploader still in progress, some CPU cores still in use: {ray.available_resources()['CPU']} of {ray.cluster_resources()['CPU']}")
     time.sleep(5)
+
 
 if __name__ == '__main__':
   main()

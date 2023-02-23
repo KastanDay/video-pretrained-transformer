@@ -106,12 +106,9 @@ class ClipEncoder:
     with torch.inference_mode():  # even faster than no_grad()
       outputs = self.clip(**image_inputs, output_hidden_states=True, return_dict=True)
       all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()  # (batch_size, hidden_size). FloatTensor
-      last_hidden_states = outputs['last_hidden_state'].cpu().numpy(
-      )  # (batch_size, sequence_length, hidden_size). FloatTensor
+      last_hidden_states = outputs['last_hidden_state'].cpu().numpy()  # (batch_size, sequence_length, hidden_size). FloatTensor
     if self.debug:
-      print(
-          f"⏰ CLIP Runtime on {len(all_frames)*self.num_frames_per_segment} images: {(time.monotonic() - start_time):.2f} seconds"
-      )
+      print(f"⏰ CLIP Runtime on {len(all_frames)*self.num_frames_per_segment} images: {(time.monotonic() - start_time):.2f} seconds")
       print("Clip all_pooled_clip_embeds.shape:")
       print(all_pooled_clip_embeds.shape)
       print("Clip last_hidden_states.shape:")
@@ -147,17 +144,15 @@ def extract_frames_from_video(video_file, times, use_multithreading=False, black
   frames = vr.get_batch(frame_indexes).asnumpy()
   # print(f"⏰ Time to get {len(frame_indexes)} frames: {(time.monotonic() - start_time):.2f} seconds (time/frame = {((time.monotonic() - start_time)/len(frame_indexes)):.2f} sec)")
   return frames
-  y1, y2, x1, x2 = _detect_black_bars_from_video(frames,
-                                                 blackbar_threshold=blackbar_threshold,
-                                                 max_perc_to_trim=max_perc_to_trim)
+  y1, y2, x1, x2 = _detect_black_bars_from_video(frames, blackbar_threshold=blackbar_threshold, max_perc_to_trim=max_perc_to_trim)
   return frames[:, y1:y2, x1:x2]
 
   # Original method. Over-complicated ANDDD slower. Fuck ffmpeg.
 
   def _extract(i):
     #   return i, extract_single_frame_from_video(video_file, times[i]) # todo: pass in video framerate.. for use in imageio.v3
-    return i, kas_extract_single_frame_from_video(
-        video_file, times[i], video_framerate)  # todo: pass in video framerate.. for use in imageio.v3
+    return i, kas_extract_single_frame_from_video(video_file, times[i],
+                                                  video_framerate)  # todo: pass in video framerate.. for use in imageio.v3
 
   if not use_multithreading:
     frames = [_extract(i)[1] for i in range(len(times))]
@@ -182,9 +177,7 @@ def extract_frames_from_video(video_file, times, use_multithreading=False, black
     return None
 
   frames = np.stack(frames)
-  y1, y2, x1, x2 = _detect_black_bars_from_video(frames,
-                                                 blackbar_threshold=blackbar_threshold,
-                                                 max_perc_to_trim=max_perc_to_trim)
+  y1, y2, x1, x2 = _detect_black_bars_from_video(frames, blackbar_threshold=blackbar_threshold, max_perc_to_trim=max_perc_to_trim)
 
   return frames
   print("Right before returning frames")
