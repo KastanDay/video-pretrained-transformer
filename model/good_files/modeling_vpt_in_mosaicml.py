@@ -54,13 +54,12 @@ class VPT_model(ComposerModel):
                                    return_dict=True)
 
     # generated vs actual tokens.
-    # todo: jus tpass logits and labels, no edits at all. Works cuz I already set Ignore index = -100, so they match.
+    # todo: just pass logits and labels, no edits at all. Works cuz I already set Ignore index = -100, so they match.
+    # self.val_cross_entropy.update(outputs.logits, batch['labels']) # this should work, is simpler, but untested
     self.val_cross_entropy.update(outputs.logits[0][0:num_new_tokens], batch['labels'][0][0:num_new_tokens])
 
     print("Cross entropy: ", self.val_cross_entropy.compute())
     wandb.log({"val_loss_cross_entropy": self.val_cross_entropy.compute()})
-
-    # batch['labels'][0][0:num_new_tokens]
 
     return outputs
 
@@ -76,8 +75,9 @@ class VPT_model(ComposerModel):
 
   def loss(self, outputs, batch):
     '''
-        Return loss from huggingface model outputs.
-        Docs'''
+    Return loss from huggingface model outputs.
+    Docs
+    '''
     loss = outputs[0].sum()
     wandb.log({"train_loss": loss})
     return loss
