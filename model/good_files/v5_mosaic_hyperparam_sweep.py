@@ -30,7 +30,7 @@ from composer.models import HuggingFaceModel
 from composer.profiler import JSONTraceHandler, cyclic_schedule
 from composer.profiler.profiler import Profiler
 from modeling_vpt_in_mosaicml import VPT_model  # original work
-from modeling_vpt_in_mosaicml import vpt_transform_dataset_to_batch
+# from modeling_vpt_in_mosaicml import vpt_transform_dataset_to_batch
 from termcolor import colored
 
 lt.monkey_patch()
@@ -40,6 +40,8 @@ global BATCH_NAME
 global MODEL_VERSION_NAME
 global MODEL_SAVE_PATH
 global DATABASE_FILEPATH
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
 def main():
@@ -76,11 +78,12 @@ def main():
   3. cosine annealing lr scheduler (warmup... and max lr)?
   '''
 
+  BATCH_NAME = "handpicked_downloads"
   MODEL_VERSION_NAME = 'feb_24_half_half_handpicked_sweep_0'
 
   sweep_configuration = {
-      'method': 'random',
-      'name': 'sweep',
+      'method': 'grid',
+      'name': f'{MODEL_VERSION_NAME}__{BATCH_NAME}',
       'metric': {
           'goal': 'minimize',
           'name': 'val_loss_cross_entropy'
@@ -93,35 +96,52 @@ def main():
               'values': [500, 2000, 8000]
           },
           'model_huggingface_name': {
-              'values': ["google/t5-large", "google/t5-v1_1-large", "google/flan-t5-large"]
+              # "t5-3b",  -- cuda OOM with this.
+              'values': ["google/t5-v1_1-large", "google/flan-t5-large"]
           },
-          'batch_size': 1,
-          'base_dir': BASE_DIR,
-          'model_version_name': MODEL_VERSION_NAME,
-          'batch_name': "handpicked_downloads",
-          'dataset_path': f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}',
-          'model_save_path': f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}',
-          'max_run_to_try': 30,
+          'batch_size': {
+              'values': [1]
+          },
+          'base_dir': {
+              'values': [BASE_DIR]
+          },
+          'model_version_name': {
+              'values': [MODEL_VERSION_NAME]
+          },
+          'batch_name': {
+              'values': [BATCH_NAME]
+          },
+          'database_filepath': {
+              'values': [f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}']
+          },
+          'model_save_path': {
+              'values': [f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}']
+          },
+          'max_run_to_try': {
+              'values': [50]
+          },
       }
   }
 
   #### START SWEEEP ####
 
-  sweep_id = wandb.sweep(sweep=sweep_configuration, project="project-name")
+  sweep_id = wandb.sweep(sweep=sweep_configuration, project="vpt-t5-sweeps")
   wandb.agent(sweep_id=sweep_id, count=sweep_configuration['parameters']['max_run_to_try'], function=train)
 
 
-def train():
+def train(config=None):
 
   with wandb.init(config=config) as run:
     config = wandb.config
-    # create dataloader
-    ds = dl.load(DATABASE_FILEPATH)
-    columns_for_training = ['clip_pooled_embedding', 'caption_embedding', 'clip_last_hidden_states', 'caption']
 
+    model = VPT_model(model_huggingface_name=config.model_huggingface_name, model_version_name=config.model_version_name)
+
+    # dataloader
+    ds = dl.load(config.database_filepath)
+    columns_for_training = ['clip_pooled_embedding', 'caption_embedding', 'clip_last_hidden_states', 'caption']
     train_dataloader = ds.pytorch(
         tensors=columns_for_training,
-        transform=vpt_transform_dataset_to_batch,
+        transform=model.vpt_transform_dataset_to_batch,
         num_workers=psutil.cpu_count(),
         batch_size=config.batch_size,
         pin_memory=True,
@@ -129,8 +149,6 @@ def train():
         drop_last=False,
         use_local_cache=False,  # downloads to ~/.deeplake, good when using S3.
     )
-
-    model = VPT_model(model_huggingface_name=config.model_huggingface_name, model_version_name=config.model_version_name)
 
     # todo: Maybe Adafactor is the better optimizer? See discussion https://discuss.huggingface.co/t/t5-finetuning-tips/684/3
     # Training without LR warmup or clip_threshold is not recommended.
@@ -190,21 +208,26 @@ def train():
     composer_trace_dir = 'composer_profiler'
     torch_trace_dir = 'torch_profiler'
 
+    # todo still testing this
+    from composer.callbacks import EarlyStopper
+    early_stopper = EarlyStopper(monitor="val_loss_cross_entropy", dataloader_label="eval", patience="200ba")
+
     trainer = Trainer(
         model=model,
         train_dataloader=train_dataloader,
         eval_dataloader=train_dataloader,
         optimizers=optimizer,
-        max_duration=3,  # epochs
         device="gpu" if torch.cuda.is_available() else "cpu",
         run_name=f'{config.model_version_name}',
         save_folder=f"{config.base_dir}/{config.model_version_name}/checkpoints",
-        save_interval="1000ba",  # 2k batches
+        max_duration="20000ba",  # 20k batches
+        save_interval="20000ba",  # 20k batches
         # save_filename="ep{epoch}.pt",
         save_num_checkpoints_to_keep=2,
         schedulers=[cosine_lr_schedule],
         loggers=[wandb_logger],
-        device_train_microbatch_size='auto',
+        callbacks=[early_stopper],
+        device_train_microbatch_size=1,  #'auto',
         precision='amp_bf16',  # also works: fp32
         # eval_interval=0,
 
