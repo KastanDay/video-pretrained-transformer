@@ -101,9 +101,11 @@ class DeeplakeManager():
 
           first_idx, last_idx = results['db_indexes'][0], results['db_indexes'][-1]
           last_idx = last_idx + 1  # Is this right?
+
           assert check_continuity(results['db_indexes']), print("db_inxexes must be continuous. This batch is not contiguous in Deeplake.")
           assert last_idx - first_idx == (len(results['frames'])), print(
               f"Length of frames {len(results['frames'])} must equal {last_idx}-{first_idx} = {last_idx - first_idx}")
+
           self.ds.clip_pooled_embedding[first_idx:last_idx] = results['pooled_clip_embeds']
           self.ds.clip_last_hidden_states[first_idx:last_idx] = results['last_hidden_states']
           self.ds.frames[first_idx:last_idx] = results['frames']
@@ -127,6 +129,18 @@ class DeeplakeManager():
       print(f"Error in {inspect.currentframe().f_code.co_name}: {e}")
       print(traceback.print_exc())
       print("Testing getting the name of the curr function: ", print(inspect.currentframe().f_code.co_name))
+
+  @dl.compute
+  def parallel_clip_encode_results_to_deeplake(sample_in, sample_out, todo_clip_results_nparray):
+    '''
+    The main version calles this as a helper.
+    
+    This updates a SINGLE tensor sample (like ds[0]) with the results of a single clip-encode.
+    '''
+
+    sample_out.caption_embedding.append()
+
+    return sample_out
 
   @ray.method(concurrency_group="single_thread_io")
   def _text_encode_results_to_deeplake(self):

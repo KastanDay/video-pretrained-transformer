@@ -55,14 +55,23 @@ class ClipEncoder:
     if self.debug:
       print(f"Done setting up CLIP...")
 
+  def TVQA_eval_run_clip_one_batch(self, some_batch):
+    '''
+    Todo: make this for TVQA. Already has frames, need to make sure I match the audio & frames together correctly. 
+    Might want to make text longer... need to find right frame & text resolution for evaluation. 
+    '''
+    raise NotImplementedError
+
   def run_clip_one_batch(self, batch_of_100_samples):
     '''
     batch_of_100_samples format. It's always 100 segments!
     batch_of_100_samples = {
-    '<full_video_filepath>':  [ {'timestamp': midpoint, 'db_index': idx} ],   # list of [times & midpoints] (1 per frame)
-    '<full_video_filepath_2>':[ {'timestamp': midpoint, 'db_index': idx} ],  
+    '<full_filepath_video_0>':  [ {'timestamp': midpoint, 'db_index': idx} ],   # list of [times & midpoints] (1 per frame)
+    '<full_filepath_video_1>':[ {'timestamp': midpoint, 'db_index': idx} ],  
     }
     '''
+
+    ## EXTRACT FRAMES
     all_frames = []
     all_timestamps = []
     all_db_indexes = []
@@ -75,7 +84,7 @@ class ClipEncoder:
         all_db_indexes.extend([segment_dict['db_index'] for segment_dict in time_and_db_index_list])
         all_frames.extend(local_frames)
       else:
-        print(f"🚨🚨 Warning (can happen occasionally): failed to extract frames for video {video_filepath}")
+        print(f"🚨🚨 Warning (ok to happen occasionally w/ corrupted videos): failed to extract frames for video {video_filepath}")
         print(f"len(local_frames) is {len(local_frames)}")
 
     # RUN CLIP

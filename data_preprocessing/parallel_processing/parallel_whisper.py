@@ -25,6 +25,8 @@ from CaptionPreprocessing import CaptionPreprocessing
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 # pyright: reportGeneralTypeIssues=false
 # ^^ due to not understanding deeplake
 # pyright: reportPrivateImportUsage=false
@@ -36,8 +38,8 @@ INPUT_VIDEOS_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_a
 WHISPER_RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_{BATCH_NAME}'
 LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
 
-NUM_GPUS = 2
-NUM_PARALLEL_INSTANCES = 4
+NUM_GPUS = 1
+NUM_PARALLEL_INSTANCES = 2
 NUM_CPU_CORES = psutil.cpu_count()
 
 
@@ -61,7 +63,8 @@ class ParallelWhisper:
     sys.path.append("../whisper_audio")
     from CaptionPreprocessing import CaptionPreprocessing
 
-    process = CaptionPreprocessing()
+    # print("WARNING HARD CODING CUDA:1")
+    process = CaptionPreprocessing(device='cuda:0')
     for file in file_batch:
       start = time.monotonic()
       try:

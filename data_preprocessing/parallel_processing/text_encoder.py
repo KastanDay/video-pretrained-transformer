@@ -19,8 +19,8 @@ os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing t
 
 class FlanT5Encoder:
 
-  def __init__(self):
-    self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+  def __init__(self, device:str = "cuda:0"):
+    self.device = device if torch.cuda.is_available() else "cpu"
     print("In FlanT5Encoder", self.device)
     self.tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-large")
     self.model = T5EncoderModel.from_pretrained("google/flan-t5-large", torch_dtype=torch.float32).to(self.device)
