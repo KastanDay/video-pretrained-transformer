@@ -30,6 +30,7 @@ sudo apt update && sudo apt install ffmpeg
 # conda method is not as well tested for this project
 conda install -c conda-forge -y ffmpeg
 # An update command might be necessary to get all of ffmpeg's codec-specifc extensions, which we need. 
+# solves error in parallel_whisper.py: ❌❌Error during whisper: Expecting value: line 1 column 1 (char 0)
 conda update ffmpeg
 ```
 
