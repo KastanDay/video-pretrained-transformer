@@ -12,11 +12,17 @@ import deeplake as dl
 import jsonlines
 import more_itertools
 import numpy as np
+import psutil
 import ray
 import tqdm
 from deeplake_driver import DeeplakeManager
 from PIL import Image
 from ray.util.queue import Queue
+
+sys.path.append("../whisper_audio")
+from CaptionPreprocessing import CaptionPreprocessing
+
+d = CaptionPreprocessing()
 
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
@@ -27,19 +33,17 @@ os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing t
 # pyright: reportOptionalMemberAccess=false
 # ^^ due to not understanding ray
 
-BATCH_NAME = 'parallel_15'
-# WHISPER_RESULTS_DATASET_PATH        = f'/mnt/storage_ssd/whisper_results_{BATCH_NAME}'
-WHISPER_RESULTS_DATASET_PATH = f'/mnt/storage_ssd/no_compression_whisper_results_{BATCH_NAME}'
-INPUT_DATASET_PATH = f'/mnt/storage_ssd/v0_for_whisper_{BATCH_NAME}'
-# BASE_DIR = '/mnt/storage_hdd/thesis/yt_1b_dataset/yt_1b_train/'
+BATCH_NAME = 'bbt_audios'
+INPUT_VIDEOS_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_audio/bbt_new/{BATCH_NAME}'
+WHISPER_RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_{BATCH_NAME}'
 LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
 
 NUM_GPUS = 1
-NUM_THREADS = 2
-NUM_CPU_CORES = 6
+NUM_PARALLEL_INSTANCES = 1
+NUM_CPU_CORES = psutil.cpu_count()
 
 
-@ray.remote(concurrency_groups={"parallel_whisper_instances": 2}, num_cpus=0, num_gpus=1)
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_INSTANCES}, num_cpus=0, num_gpus=1)
 class ParallelWhisper:
 
   def __init__(self):
@@ -56,10 +60,10 @@ class ParallelWhisper:
     '''
     Main function for parallel whisper. 
     '''
-    # sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio")
-    sys.path.append("/home/kastan/thesis/video-pretrained-transformer/data_preprocessing/whisper_audio")
-    import CaptionPreprocessing as CaptionPreprocessing
-    process = CaptionPreprocessing.CaptionPreprocessing()
+    sys.path.append("../whisper_audio")
+    from CaptionPreprocessing import CaptionPreprocessing
+
+    process = CaptionPreprocessing()
     for file in file_batch:
       start = time.monotonic()
       try:
@@ -101,6 +105,14 @@ def write_error(file):
     writer.write({"video_filepath": failed_file_json_object})
 
 
+def find_files(directory: os.PathLike):
+  filepaths = []
+  for root, dirs, files in os.walk(directory):
+    for file in files:
+      filepaths.append(os.path.join(root, file))
+  return filepaths
+
+
 @ray.remote(num_cpus=1)
 def DEPRICATED_add_to_dataset(whisper_one_video_results):
   print("Entering add_to_dataset")
@@ -138,10 +150,9 @@ def main():
   # ray.shutdown()
   ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False, ignore_reinit_error=True)
   print_cluster_stats()
-  start = time.time()
-  ds = dl.load(INPUT_DATASET_PATH)
-  ds.summary()
-  files = ds.video_filepath.data()['value']
+  start = time.monotonic()
+  files = find_files(INPUT_VIDEOS_PATH)
+  print(f"⏰ Time to collect input video files: {(time.monotonic() - start):.2f} seconds")
 
   # filter out bad files (.vtt and .wav, and .json) Anything other than webm and mp4?
   files = [str(file) for file in files if not str(file).endswith(('.txt', '.vtt', 'json'))]
@@ -177,23 +188,20 @@ def main():
       ds.create_tensor('video_filepath', htype='text', dtype=str, sample_compression=None)
 
   # split files into batches
-  if NUM_THREADS == 1:
+  if NUM_PARALLEL_INSTANCES == 1:
     batches = [files]
   else:
-    batches = list(more_itertools.divide(NUM_THREADS, files))
+    batches = list(more_itertools.divide(NUM_PARALLEL_INSTANCES, files))
   # print batch stats
   print("Num batches: ", len(batches))
-  assert len(batches) == (NUM_THREADS), "there is supposed to be one Ray thread per batch"
+  assert len(batches) == (NUM_PARALLEL_INSTANCES), "there is supposed to be one Ray thread per batch"
 
   if not os.path.isdir(LOCAL_VIDEO_DIR + "_wav"):
     os.mkdir(LOCAL_VIDEO_DIR + "_wav")
 
   print("Starting parallel batches")
   parallel_whisper = ParallelWhisper.remote()
-  all_result_futures = [parallel_whisper.parallel_caption_extraction.remote(batch) for batch in batches]
-
-  all_done = ray.get(all_result_futures)
-
+  all_done = ray.get([parallel_whisper.parallel_caption_extraction.remote(batch) for batch in batches])
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
 

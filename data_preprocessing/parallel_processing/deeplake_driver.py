@@ -188,7 +188,7 @@ class DeeplakeManager():
                 'caption': segment['caption'],
                 'video_filename': segment["video_filename_name"],
                 'video_filepath': segment["video_filepath"],
-                'segment_metadata': dict(json.dumps(metadata)),
+                'segment_metadata': dict(metadata),  # just deleting the json.dumps() call
             })
           print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
           print(self.ds.summary())
@@ -201,9 +201,6 @@ class DeeplakeManager():
       print(f"Data being added during error:")
       pprint.pprint(segment)
       print(traceback.print_exc())
-
-
-import pickle
 
 
 def compress_and_delete_dataset(dataset_path, destructive=False):
