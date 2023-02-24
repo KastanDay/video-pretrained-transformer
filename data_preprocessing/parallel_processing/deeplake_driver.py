@@ -149,6 +149,7 @@ class DeeplakeManager():
             # assert check_continuity(input_dict['db_index']), print("db_index must be continuous. This batch is not contiguous in Deeplake.")
             # assert last_idx-first_idx == (len(input_dict['frames'])), print(f"Length of frames {len(input_dict['frames'])} must equal {last_idx}-{first_idx} = {last_idx - first_idx}")
 
+            # TODO:
             self.ds.caption_embedding[input_dict['db_index']] = input_dict['last_hidden_states']
           print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
           print(

@@ -13,6 +13,7 @@ import deeplake as dl
 import jsonlines
 import more_itertools
 import numpy as np
+import psutil
 import ray
 from deeplake_driver import DeeplakeManager
 from PIL import Image
@@ -35,25 +36,28 @@ os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing t
 GLOBAL_TOKENIZER = T5Tokenizer.from_pretrained("google/flan-t5-large")
 
 # BATCH_NAME = "parallel_15"
-BATCH_NAME = "handpicked_downloads"
+# BATCH_NAME = "handpicked_downloads"
+BATCH_NAME = "TVQA_BBT"
 # INPUT_DATASET_PATH = f"/mnt/storage_ssd/FULL_whisper_results_{BATCH_NAME}"
 # RESULTS_DATASET_PATH = f"/mnt/storage_ssd/v3_text_encode_results_{BATCH_NAME}"
 
-INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/deeplake_handpicked/no_compression_whisper_results_handpicked"
-RESULTS_DATASET_PATH = f"/mnt/teton/vpt/data/deeplake_handpicked/feb_4_text_encode_results_{BATCH_NAME}"
+# INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/deeplake_handpicked/no_compression_whisper_results_handpicked"
+INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_bbt_audios"
+RESULTS_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/feb_23_text_encode_results_{BATCH_NAME}"
 # INPUT_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/no_compression_whisper_results_handpicked"
 # RESULTS_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}"
 
 NUM_GPUS = 1
-NUM_PARALLEL_PROCESSES = 16
-NUM_CPU_CORES = 16
+# NUM_PARALLEL_PROCESSES = 16
+NUM_PARALLEL_PROCESSES = 2
+NUM_CPU_CORES = psutil.cpu_count()
 BATCH_SIZE = 512
 
 # batch_size 38 was max on 1080ti.
 
 
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
-@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS)
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=0, num_gpus=NUM_GPUS)
 class ParallelEncode:
   """
   Parallel actor. Degree of Parallelism = NUM_PARALLEL_PROCESSES
@@ -82,6 +86,12 @@ class ParallelEncode:
       if i % 100 == 0:
         print(f"📌 {self.work_queue.qsize()} batches. Still adding more...")
     print("DONE POPULATING WORK QUEUE!")
+
+    # block until work is done.
+    while self.upload_queue.qsize() > 0 or self.work_queue.qsize() > 0:
+      time.sleep(10)
+
+    print("✅ Work & upload queue are empty. All work should be done! ")
     return 0
 
   @ray.method(concurrency_group="parallel_whisper_instances")
@@ -93,7 +103,13 @@ class ParallelEncode:
     while self.work_queue.qsize() > 0:
       start = time.monotonic()
       print(f"📌 {self.work_queue.qsize()} batches remaining")
-      batch = self.work_queue.get(block=True)
+      try:
+        batch = self.work_queue.get(block=True, timeout=10)
+      except Exception as e:
+        # it'll raise Empty after timeout, so just test while loop condition
+        print("Temout waiting for work from work_queue. This is expected near end of job as workers finish.")
+        continue
+
       try:
         # returns: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
         last_hidden_states_batch = process.encode(batch)
@@ -110,6 +126,7 @@ class ParallelEncode:
       print(
           f"⏰ Time to Text-encode file: {(time.monotonic() - start)/60:.2f} minutes. (time/segment): {((time.monotonic() - start)/BATCH_SIZE):.2f} sec"
       )
+    return 0
 
 
 @dl.compute
@@ -226,7 +243,6 @@ def main():
   parallel_encode = ParallelEncode.remote()
   print("Starting upload queue")
   populate_work_queue_future = parallel_encode.populate_work_queue.remote()
-  time.sleep(10)  # wait for jobs to be ready, then start text encoder
   print("Starting parallel batches")
   all_done_futures = [parallel_encode.parallel_text_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)]
   all_done = ray.get(all_done_futures)

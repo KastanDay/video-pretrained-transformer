@@ -3,10 +3,13 @@ import json
 import os
 import pathlib
 import sys
+import time
 import traceback
 from dataclasses import asdict
 from logging import raiseExceptions
 from os import path
+
+import GPUtil
 
 # sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper/lhotse")
 # sys.path.append("/u/kastanday/parallel_pdg/video-pretrained-transformer/data_preprocessing/whisper_audio/lhotse_faster_whisper")
@@ -16,18 +19,30 @@ sys.path.append("lhotse_faster_whisper/lhotse")
 sys.path.append("lhotse_faster_whisper")
 import jsonlines
 import torch
-from lhotse import (Recording, RecordingSet, align_with_torchaudio, annotator_lhotse)
+from lhotse import (Recording, RecordingSet, align_with_torchaudio,
+                    annotator_lhotse)
 from pydub import AudioSegment
 
 
 class CaptionPreprocessing:
   # Takes in a path to an mp4 file, converts it to wav
-  def __init__(self, debug=False):
+  def __init__(self, debug=False, device: str = None):
     # self.final_whisper_results_jsonl = final_whisper_results_jsonl
     self.debug = debug
-    self.device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(self.device)
-    self.whisper_model = annotator_lhotse("medium", device=self.device)
+    if device:
+      self.device_for_whisper = device
+      self.device_for_torchaudio_align = "cpu"
+    else:
+      # return GPUs with at least 20% free memory (100% - maxMemory)
+      try:
+        cuda_id = GPUtil.getAvailable(order='memory', limit=1, maxMemory=0.8)[0]
+        self.device_for_whisper = f"cuda:{cuda_id}" if torch.cuda.is_available() else "cpu"
+        self.device_for_torchaudio_align = f"cuda:{cuda_id}" if torch.cuda.is_available() else "cpu"
+      except IndexError as e:
+        raise IndexError("No GPUs with at least 20% free memory.")
+    print("In CaptionPreprocessing, whisper device:", self.device_for_whisper)
+    print("In CaptionPreprocessing: torchaudio cuts align device", self.device_for_torchaudio_align)
+    self.whisper_model = annotator_lhotse("medium", device=self.device_for_whisper)
 
   def process_mp4(self, path):
     self.cut = None
@@ -81,7 +96,7 @@ class CaptionPreprocessing:
         # More than 10 failed attempts
         try:
           cuts = self.whisper_model.yield_annotated_recordings(recordings)
-          cuts_aligned = align_with_torchaudio(cuts, device=self.device)
+          cuts_aligned = align_with_torchaudio(cuts, device=self.device_for_torchaudio_align)
           for cut in cuts_aligned:
             return asdict(cut)
         except Exception as e:
@@ -163,7 +178,7 @@ class CaptionPreprocessing:
     self.curr_dict_list = curr_dict_list
 
     # hopefully limit memory usage
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
     return curr_dict_list
 
   def output_json(self, input_video_dir):

@@ -22,8 +22,6 @@ from ray.util.queue import Queue
 sys.path.append("../whisper_audio")
 from CaptionPreprocessing import CaptionPreprocessing
 
-d = CaptionPreprocessing()
-
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
 
@@ -38,12 +36,12 @@ INPUT_VIDEOS_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_a
 WHISPER_RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_{BATCH_NAME}'
 LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
 
-NUM_GPUS = 1
-NUM_PARALLEL_INSTANCES = 1
+NUM_GPUS = 2
+NUM_PARALLEL_INSTANCES = 4
 NUM_CPU_CORES = psutil.cpu_count()
 
 
-@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_INSTANCES}, num_cpus=0, num_gpus=1)
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_INSTANCES}, num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS)
 class ParallelWhisper:
 
   def __init__(self):
@@ -82,7 +80,7 @@ class ParallelWhisper:
       except Exception as e:
         print(file)
         # write failed files to jsonlines
-        print(f"❌❌Error during whisper: {e}")
+        print(f"❌❌ Error during whisper: {e}")
         traceback.print_exc()
         failed_file_json_object = json.dumps(str(file))
         error_filepath = LOCAL_VIDEO_DIR + "_whisper_errors.jsonl"
@@ -201,7 +199,13 @@ def main():
 
   print("Starting parallel batches")
   parallel_whisper = ParallelWhisper.remote()
-  all_done = ray.get([parallel_whisper.parallel_caption_extraction.remote(batch) for batch in batches])
+
+  # slow start so GPUs can spin up & dynamically assign processes to most free GPUs.
+  futures = []
+  for batch in batches:
+    time.sleep(5)
+    futures.append(parallel_whisper.parallel_caption_extraction.remote(batch))
+  all_done = ray.get(futures)
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
 

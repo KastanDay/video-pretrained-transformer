@@ -20,14 +20,15 @@ os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing t
 class FlanT5Encoder:
 
   def __init__(self):
-    device = "cuda:1" if torch.cuda.is_available() else "cpu"
-    print(device)
+    self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    print("In FlanT5Encoder", self.device)
     self.tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-large")
-    self.model = T5EncoderModel.from_pretrained(
-        "google/flan-t5-large",
-        # set device_map to only cuda:0
-        device_map="sequential",
-        torch_dtype=torch.float16)
+    self.model = T5EncoderModel.from_pretrained("google/flan-t5-large", torch_dtype=torch.float32).to(self.device)
+    # self.model = T5EncoderModel.from_pretrained(
+    #     "google/flan-t5-large",
+    #     # set device_map to only cuda:0
+    #     # device_map="sequential",
+    #     torch_dtype=torch.float16).to(device)  # I would really like to use this, but I think it's not supported by numpy or something.
     # self.model = T5EncoderModel.from_pretrained("google/flan-t5-large",
     #                                             device_map="auto",
     #                                             torch_dtype=torch.float16,
@@ -48,9 +49,14 @@ class FlanT5Encoder:
     last_hidden_states_batch = []
     # for input_dict in batch:
     with torch.inference_mode():
-      tokens = self.tokenizer(input_dict["caption"], return_tensors="pt", padding=False, truncation=False)
+      # print("ABOUT TO ENCODE CAPTION: ", input_dict["caption"])
+      tokens = self.tokenizer(input_dict["caption"], return_tensors="pt", padding=False, truncation=False).to(self.device)
+      # print("TOKENS: ", tokens)
       lhs = self.model(**tokens).last_hidden_state
-      lhs = lhs.detach().cpu().numpy().reshape(-1, 1024)
+      
+      # CAST FROM 32 to 16 bit via .half() !!
+      lhs = lhs.half().detach().cpu().numpy().reshape(-1, 1024)
+      # print("LAST HIDDEN STATE: ", lhs)
       last_hidden_states_batch.append({'last_hidden_states': lhs, 'db_index': input_dict['db_index']})
     # return: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
     return last_hidden_states_batch
