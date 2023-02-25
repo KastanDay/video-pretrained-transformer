@@ -42,6 +42,7 @@ global MODEL_SAVE_PATH
 global DATABASE_FILEPATH
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["WANDB_DISABLE_SERVICE"] = "true"
 
 
 def main():
@@ -90,14 +91,16 @@ def main():
       },
       'parameters': {
           'learning_rate': {
-              'values': [5e-5, 1e-4, 3e-4, 1e-3]
+              'values': [3e-4, 1e-3]
           },
           'cosine_warmup_batches': {
               'values': [500, 2000, 8000]
           },
           'model_huggingface_name': {
-              # "t5-3b",  -- cuda OOM with this.
-              'values': ["google/t5-v1_1-large", "google/flan-t5-large"]
+              # "t5-large",  -- cuda OOM with this.
+              # todo: test this param: google/flan-t5-large
+              # google/t5-v1_1-large -- my standard.
+              'values': ["google/flan-t5-large"]
           },
           'batch_size': {
               'values': [1]
@@ -111,8 +114,11 @@ def main():
           'batch_name': {
               'values': [BATCH_NAME]
           },
-          'database_filepath': {
+          'train_dataset_filepath': {
               'values': [f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}']
+          },
+          'eval_dataset_filepath': {
+              'values': [f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}/.queries/eval']
           },
           'model_save_path': {
               'values': [f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}']
@@ -120,26 +126,55 @@ def main():
           'max_run_to_try': {
               'values': [50]
           },
-      }
+          'min_delta': {
+              # .1 was too big I think. Might be cause of early stopping.
+              'values': [0.01]
+          },
+      },
+      'early_terminate': {
+          'type': 'hyperband',
+          'max_iter': 10000,
+          's': 10,
+      },
   }
 
   #### START SWEEEP ####
 
-  sweep_id = wandb.sweep(sweep=sweep_configuration, project="vpt-t5-sweeps")
+  #   CALL THIS FILE WITH:  WANDB_DISABLE_SERVICE=true python v5_mosaic_hyperparam_sweep.py
+
+  sweep_id = wandb.sweep(sweep=sweep_configuration, project="vpt-t5-sweeps-v3")
+  print(sweep_id, colored("sweep_id", "green"))
   wandb.agent(sweep_id=sweep_id, count=sweep_configuration['parameters']['max_run_to_try'], function=train)
 
 
 def train(config=None):
 
-  with wandb.init(config=config) as run:
+  with wandb.init(config=config):
     config = wandb.config
+
+    config.update({'allow_val_change': True})  # something about dataloaders??
 
     model = VPT_model(model_huggingface_name=config.model_huggingface_name, model_version_name=config.model_version_name)
 
     # dataloader
-    ds = dl.load(config.database_filepath)
+    ds = dl.load(config.train_dataset_filepath)
     columns_for_training = ['clip_pooled_embedding', 'caption_embedding', 'clip_last_hidden_states', 'caption']
     train_dataloader = ds.pytorch(
+        tensors=columns_for_training,
+        transform=model.vpt_transform_dataset_to_batch,
+        num_workers=psutil.cpu_count(),
+        batch_size=config.batch_size,
+        pin_memory=True,
+        shuffle=False,
+        drop_last=False,
+        use_local_cache=False,  # downloads to ~/.deeplake, good when using S3.
+    )
+
+    ds_eval = dl.load(config.eval_dataset_filepath)
+    # ds_eval.config.update(allow_val_changes=True)
+    # ds_eval = ds_eval[0:48]
+    columns_for_training = ['clip_pooled_embedding', 'caption_embedding', 'clip_last_hidden_states', 'caption']
+    eval_dataloader = ds_eval.pytorch(
         tensors=columns_for_training,
         transform=model.vpt_transform_dataset_to_batch,
         num_workers=psutil.cpu_count(),
@@ -162,26 +197,27 @@ def train(config=None):
 
     optimizer = torch.optim.AdamW(params=model.parameters(),
                                   lr=config.learning_rate)  # Typically, 1e-4 and 3e-4 work well for most problems
-    wandb_logger = WandBLogger(
-        init_kwargs={
-            "config": {
-                'learning_rate': config.learning_rate,
-                'batch_name': config.batch_name,
-                'dataset_path': config.database_filepath,
-                'model_save_path': config.model_save_path,
-            },
-            "entity": "kastan",
-            "project": "VPT-custom-t5",
-            "name": config.model_version_name,
-            # group=datetime_str,
-            "tags": [
-                # 'Adafactor w/ auto_lr',
-                'Adamw',
-                # 'FSDP',
-                'MosaicML',
-                'resume_from_checkpoint',
-            ],
-        })
+    # wandb_logger = WandBLogger(
+    #     init_kwargs={
+    #         "config": {
+    #             'learning_rate': config.learning_rate,
+    #             'batch_name': config.batch_name,
+    #             'eval_dataset_filepath': config.eval_dataset_filepath,
+    #             'train_dataset_filepath': config.train_dataset_filepath,
+    #             'model_save_path': config.model_save_path,
+    #         },
+    #         "entity": "kastan",
+    #         "project": "vpt-t5-sweeps-v2",
+    #         "name": config.model_version_name,
+    #         # group=datetime_str,
+    #         "tags": [
+    #             # 'Adafactor w/ auto_lr',
+    #             'Adamw',
+    #             # 'FSDP',
+    #             'MosaicML',
+    #             'resume_from_checkpoint',
+    #         ],
+    #     })
 
     ## FSDP config: https://docs.mosaicml.com/en/v0.11.1/notes/distributed_training.html#composer-s-fsdp-auto-wrap-policy
     # If any module has more parameters than fsdp_config['min_params'], it will be wrapped.
@@ -209,27 +245,34 @@ def train(config=None):
     torch_trace_dir = 'torch_profiler'
 
     # todo still testing this
-    from composer.callbacks import EarlyStopper
-    early_stopper = EarlyStopper(monitor="val_loss_cross_entropy", dataloader_label="eval", patience="200ba")
+    from composer.callbacks import EarlyStopper, ThresholdStopper
+    early_stopper = EarlyStopper(monitor="val_loss_cross_entropy", dataloader_label="eval", patience="700ba", min_delta=config.min_delta)
+
+    threshold_stopper = ThresholdStopper(
+        monitor="val_loss_cross_entropy",
+        dataloader_label="eval",
+        threshold=3.25,
+    )
 
     trainer = Trainer(
         model=model,
         train_dataloader=train_dataloader,
-        eval_dataloader=train_dataloader,
+        eval_dataloader=eval_dataloader,
         optimizers=optimizer,
         device="gpu" if torch.cuda.is_available() else "cpu",
         run_name=f'{config.model_version_name}',
         save_folder=f"{config.base_dir}/{config.model_version_name}/checkpoints",
-        max_duration="20000ba",  # 20k batches
-        save_interval="20000ba",  # 20k batches
+        # max_duration="20000sp",  # 20k samples.. batches seems like it wasn't working!
+        max_duration="10000ba",  # 20k samples.. batches seems like it wasn't working!
+        save_interval="40000ba",  # 20k batches
         # save_filename="ep{epoch}.pt",
-        save_num_checkpoints_to_keep=2,
+        save_num_checkpoints_to_keep=0,
         schedulers=[cosine_lr_schedule],
-        loggers=[wandb_logger],
-        callbacks=[early_stopper],
+        # loggers=[wandb_logger],
+        callbacks=[early_stopper, threshold_stopper],
         device_train_microbatch_size=1,  #'auto',
         precision='amp_bf16',  # also works: fp32
-        # eval_interval=0,
+        eval_interval="4ep",  # NEVER EVAL
 
         # grad_accum=10, # requires multiple GPUs I guess
         # algorithms=[alibi],  # FusedLayerNorm() -- use NGC

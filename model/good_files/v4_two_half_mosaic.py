@@ -210,6 +210,7 @@ def train():
 
         # grad_accum=10, # requires multiple GPUs I guess
         # algorithms=[alibi],  # FusedLayerNorm() -- use NGC
+        # algorithms=[FusedLayerNorm()],
         # fsdp_config=fsdp_config,
 
         # ----------- RESUME FROM CHECKPOINT -----------
