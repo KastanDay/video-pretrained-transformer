@@ -43,7 +43,7 @@ NUM_PARALLEL_INSTANCES = 2
 NUM_CPU_CORES = psutil.cpu_count()
 
 
-@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_INSTANCES}, num_cpus=NUM_CPU_CORES, num_gpus=NUM_GPUS)
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_INSTANCES}, num_cpus=0, num_gpus=NUM_GPUS)
 class ParallelWhisper:
 
   def __init__(self):
