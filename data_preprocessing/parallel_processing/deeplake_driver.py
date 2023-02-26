@@ -203,7 +203,7 @@ class DeeplakeManager():
                 'caption': segment['caption'],
                 'video_filename': segment["video_filename_name"],
                 'video_filepath': segment["video_filepath"],
-                'segment_metadata': dict(metadata),  # just deleting the json.dumps() call
+                'segment_metadata': json.dumps(dict(metadata)),  # just deleting the json.dumps() call
             })
           print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
           print(self.ds.summary())

@@ -35,17 +35,13 @@ os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing t
 # for ray OOM errors: export RAY_DISABLE_MEMORY_MONITOR=1
 GLOBAL_TOKENIZER = T5Tokenizer.from_pretrained("google/flan-t5-large")
 
-# BATCH_NAME = "parallel_15"
-# BATCH_NAME = "handpicked_downloads"
-BATCH_NAME = "TVQA_BBT"
-# INPUT_DATASET_PATH = f"/mnt/storage_ssd/FULL_whisper_results_{BATCH_NAME}"
-# RESULTS_DATASET_PATH = f"/mnt/storage_ssd/v3_text_encode_results_{BATCH_NAME}"
+# BATCH_NAME = "TVQA_BBT"
+# INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_bbt_audios"
+# RESULTS_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/feb_23_text_encode_results_{BATCH_NAME}"
 
-# INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/deeplake_handpicked/no_compression_whisper_results_handpicked"
-INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_bbt_audios"
-RESULTS_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/feb_23_text_encode_results_{BATCH_NAME}"
-# INPUT_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/no_compression_whisper_results_handpicked"
-# RESULTS_DATASET_PATH = f"/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}"
+BATCH_NAME = 'yt1b-val'
+INPUT_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_whisper_results_{BATCH_NAME}'
+RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_text_encode_results_{BATCH_NAME}'
 
 NUM_GPUS = 1
 # NUM_PARALLEL_PROCESSES = 16

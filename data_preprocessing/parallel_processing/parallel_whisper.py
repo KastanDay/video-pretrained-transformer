@@ -18,6 +18,7 @@ import tqdm
 from deeplake_driver import DeeplakeManager
 from PIL import Image
 from ray.util.queue import Queue
+from termcolor import colored
 
 sys.path.append("../whisper_audio")
 from CaptionPreprocessing import CaptionPreprocessing
@@ -25,21 +26,26 @@ from CaptionPreprocessing import CaptionPreprocessing
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 # pyright: reportGeneralTypeIssues=false
 # ^^ due to not understanding deeplake
 # pyright: reportPrivateImportUsage=false
 # pyright: reportOptionalMemberAccess=false
 # ^^ due to not understanding ray
-
-BATCH_NAME = 'bbt_audios'
-INPUT_VIDEOS_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_audio/bbt_new/{BATCH_NAME}'
-WHISPER_RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_{BATCH_NAME}'
+BATCH_NAME = 'yt1b-val'
+INPUT_VIDEOS_PATH = f'/mnt/teton/vpt/data/yt-1b/yt1b-val'
+WHISPER_RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_whisper_results_{BATCH_NAME}'
 LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
 
-NUM_GPUS = 1
-NUM_PARALLEL_INSTANCES = 2
+# BATCH_NAME = 'bbt_audios'
+# INPUT_VIDEOS_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_audio/bbt_new/{BATCH_NAME}'
+# WHISPER_RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_{BATCH_NAME}'
+# LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
+
+NUM_GPUS = 2
+NUM_PARALLEL_INSTANCES = 8  # 2 for 1080ti, 6 for 4090.
 NUM_CPU_CORES = psutil.cpu_count()
 
 
@@ -64,7 +70,7 @@ class ParallelWhisper:
     from CaptionPreprocessing import CaptionPreprocessing
 
     # print("WARNING HARD CODING CUDA:1")
-    process = CaptionPreprocessing(device='cuda:0')
+    process = CaptionPreprocessing()  #(device='cuda:0')
     for file in file_batch:
       start = time.monotonic()
       try:
@@ -166,10 +172,11 @@ def main():
     try:
       completed_videos = set()
       for index, data_row in enumerate(ds_completed):
-        # try:
-        completed_videos.add(data_row.video_filepath.data()['value'])
-        # except Exception as e:
-        #   print("Datalake unable to load index", index, "error is", e)
+        try:
+          completed_videos.add(data_row.video_filepath.data()['value'])
+        except Exception as e:
+          print(colored(f"⚠️ CORRUPTED INDEX IN Deeplake Database.", "yellow", attrs=["reverse", "bold"]))
+          print("Datalake unable to load index", index, "error is", e)
       print("⭐️😁 num videos already processed:", len(list(completed_videos)))
       files = set(files) - completed_videos
       files = list(files)
@@ -206,7 +213,7 @@ def main():
   # slow start so GPUs can spin up & dynamically assign processes to most free GPUs.
   futures = []
   for batch in batches:
-    time.sleep(5)
+    time.sleep(8)
     futures.append(parallel_whisper.parallel_caption_extraction.remote(batch))
   all_done = ray.get(futures)
   print("Len of all threads: ", len(all_done))

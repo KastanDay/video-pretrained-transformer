@@ -19,7 +19,7 @@ os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing t
 
 class FlanT5Encoder:
 
-  def __init__(self, device:str = "cuda:0"):
+  def __init__(self, device: str = "cpu"):
     self.device = device if torch.cuda.is_available() else "cpu"
     print("In FlanT5Encoder", self.device)
     self.tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-large")
@@ -53,7 +53,7 @@ class FlanT5Encoder:
       tokens = self.tokenizer(input_dict["caption"], return_tensors="pt", padding=False, truncation=False).to(self.device)
       # print("TOKENS: ", tokens)
       lhs = self.model(**tokens).last_hidden_state
-      
+
       # CAST FROM 32 to 16 bit via .half() !!
       lhs = lhs.half().detach().cpu().numpy().reshape(-1, 1024)
       # print("LAST HIDDEN STATE: ", lhs)

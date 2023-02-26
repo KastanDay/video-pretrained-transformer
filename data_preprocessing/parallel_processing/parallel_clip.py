@@ -44,9 +44,13 @@ global GPU_PER_PROCESS
 # RESULTS_DATASET_PATH = f'/mnt/storage_hdd/thesis/yt_1b_dataset/backups/v3_CLIP_encode_results_{BATCH_NAME}' # hdd
 # RESULTS_DATASET_PATH = f'/mnt/storage_ssd/v4_CLIP_encode_results_{BATCH_NAME}'  # ssd
 
-BATCH_NAME = "handpicked_downloads"
-INPUT_DATASET_PATH = f'/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}'
-RESULTS_DATASET_PATH = f'/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/CLIP_encode_results_{BATCH_NAME}'
+# BATCH_NAME = "handpicked_downloads"
+# INPUT_DATASET_PATH = f'/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/text_encode_results_{BATCH_NAME}'
+# RESULTS_DATASET_PATH = f'/mnt/storage_hdd/thesis/handpicked_downloads/PREPROCESSED_DATA/CLIP_encode_results_{BATCH_NAME}'
+
+BATCH_NAME = 'yt1b-val'
+INPUT_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_text_encode_results_{BATCH_NAME}'
+RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_CLIP_encode_results_{BATCH_NAME}'
 
 # THIS is GREAT balance on delta GPU, 4X GPU with clip running
 # NUM_PARALLEL_PROCESSES = 20      # Number of parallel processes (limited by DRAM and SRAM)
@@ -204,26 +208,30 @@ def add_samples_to_dict(ds, do_filtering):
   start_time = time.monotonic()
 
   def add_one_sample(sample, batch, list_of_batches, total_samples):
-    metadata = json.loads(sample['segment_metadata'].data()['value'])
-    seg_start_time = float(metadata['start'])
-    seg_end_time = float(metadata['end'])
-    midpoint = (seg_end_time + seg_start_time) / 2
+    try:
+      metadata = json.loads(sample['segment_metadata'].data()['value'])
+      seg_start_time = float(metadata['start'])
+      seg_end_time = float(metadata['end'])
+      midpoint = (seg_end_time + seg_start_time) / 2
 
-    # add to dict {'<filepath>': [<frame_timestamp>, ...]}
-    video_filepath = sample['video_filepath'].data()['value']
-    if video_filepath not in batch.keys():
-      batch[video_filepath] = []
-    batch[video_filepath].append({'timestamp': midpoint, 'db_index': idx})
+      # add to dict {'<filepath>': [<frame_timestamp>, ...]}
+      video_filepath = sample['video_filepath'].data()['value']
+      if video_filepath not in batch.keys():
+        batch[video_filepath] = []
+      batch[video_filepath].append({'timestamp': midpoint, 'db_index': idx})
 
-    # make batches of samples
-    total_samples_in_batch = 0
-    for video_filepath, time_and_db_index_list in batch.items():
-      total_samples_in_batch += len(time_and_db_index_list)
-    if total_samples_in_batch == BATCH_SIZE:
-      list_of_batches.append(batch)
-      batch = {}
-    total_samples += 1
-    return sample, batch, list_of_batches, total_samples
+      # make batches of samples
+      total_samples_in_batch = 0
+      for video_filepath, time_and_db_index_list in batch.items():
+        total_samples_in_batch += len(time_and_db_index_list)
+      if total_samples_in_batch == BATCH_SIZE:
+        list_of_batches.append(batch)
+        batch = {}
+      total_samples += 1
+      return sample, batch, list_of_batches, total_samples
+    except Exception as e:
+      print("in Add_one_sample (might be a corrupted Deeplake?): ", e)
+      return None, None, None, None
 
   # DO FILTERING HERE:
   batch = {}
