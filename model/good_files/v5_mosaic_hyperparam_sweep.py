@@ -44,43 +44,43 @@ global DATABASE_FILEPATH
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["WANDB_DISABLE_SERVICE"] = "true"
 
+print("CPU count:", psutil.cpu_count())
+device = "cuda:0" if torch.cuda.is_available() else "cpu"
+print("Running on:", device)
+
+result = subprocess.run(["hostname"], capture_output=True, text=True)
+hostname = str(result.stdout.strip())
+
+BASE_DIR = ''
+if "gpu" in hostname or "gpu" in hostname:
+  print("Hostname: Delta GPU")
+  BASE_DIR = '/scratch/bbki/kastanday/whisper'
+elif 'storage' in hostname:
+  print("Hostname: kastan storage")
+  BASE_DIR = '/mnt/storage_ssd'
+elif 'dgx' in hostname:
+  print("Hostname: DGX")
+  BASE_DIR = '/raid/projects/kastan'
+elif 'hal' in hostname:
+  print("Hostname: HAL")
+  BASE_DIR = '~/thesis/VPT_data'
+elif '103ai' in hostname:
+  print("Hostname: 103ai, EPYC")
+  # BASE_DIR = '/mnt/teton/vpt/data/deeplake_parallel_15'
+  BASE_DIR = '/mnt/teton/vpt/data/deeplake_handpicked'
+
+BATCH_NAME = "handpicked_downloads"
+MODEL_VERSION_NAME = 'feb_25_half_half_handpicked'
+MAX_SWEEP_RUNS_TO_TRY = 50
+
 
 def main():
-  print("CPU count:", psutil.cpu_count())
-  device = "cuda:0" if torch.cuda.is_available() else "cpu"
-  print("Running on:", device)
-
-  result = subprocess.run(["hostname"], capture_output=True, text=True)
-  hostname = str(result.stdout.strip())
-
-  BASE_DIR = ''
-  if "gpu" in hostname or "gpu" in hostname:
-    print("Hostname: Delta GPU")
-    BASE_DIR = '/scratch/bbki/kastanday/whisper'
-  elif 'storage' in hostname:
-    print("Hostname: kastan storage")
-    BASE_DIR = '/mnt/storage_ssd'
-  elif 'dgx' in hostname:
-    print("Hostname: DGX")
-    BASE_DIR = '/raid/projects/kastan'
-  elif 'hal' in hostname:
-    print("Hostname: HAL")
-    BASE_DIR = '~/thesis/VPT_data'
-  elif '103ai' in hostname:
-    print("Hostname: 103ai, EPYC")
-    # BASE_DIR = '/mnt/teton/vpt/data/deeplake_parallel_15'
-    BASE_DIR = '/mnt/teton/vpt/data/deeplake_handpicked'
-
-  ##### MANUAL PARAMS #####
   '''
   hyperparam experiments:
   1. model name: google/t5-large, google/t5-v1_1-large, google/flan-t5-large
   2. learning rate
   3. cosine annealing lr scheduler (warmup... and max lr)?
   '''
-
-  BATCH_NAME = "handpicked_downloads"
-  MODEL_VERSION_NAME = 'feb_24_half_half_handpicked_sweep_0'
 
   sweep_configuration = {
       'method': 'grid',
@@ -89,52 +89,25 @@ def main():
           'goal': 'minimize',
           'name': 'val_loss_cross_entropy'
       },
+      # SWEEP THESE HYPERPARAMS
       'parameters': {
           'learning_rate': {
-              'values': [3e-4, 1e-3]
+              'values': [1e-3]
           },
           'cosine_warmup_batches': {
-              'values': [500, 2000, 8000]
+              'values': [500, 5000, 10000]
           },
           'model_huggingface_name': {
               # "t5-large",  -- cuda OOM with this.
               # todo: test this param: google/flan-t5-large
               # google/t5-v1_1-large -- my standard.
-              'values': ["google/flan-t5-large"]
-          },
-          'batch_size': {
-              'values': [1]
-          },
-          'base_dir': {
-              'values': [BASE_DIR]
-          },
-          'model_version_name': {
-              'values': [MODEL_VERSION_NAME]
-          },
-          'batch_name': {
-              'values': [BATCH_NAME]
-          },
-          'train_dataset_filepath': {
-              'values': [f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}']
-          },
-          'eval_dataset_filepath': {
-              'values': [f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}/.queries/eval']
-          },
-          'model_save_path': {
-              'values': [f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}']
-          },
-          'max_run_to_try': {
-              'values': [50]
-          },
-          'min_delta': {
-              # .1 was too big I think. Might be cause of early stopping.
-              'values': [0.01]
-          },
+              'values': ["google/flan-t5-large", "google/t5-v1_1-large", "t5-large"]
+          }
       },
       'early_terminate': {
           'type': 'hyperband',
-          'max_iter': 10000,
-          's': 10,
+          'max_iter': 15000,
+          's': 5,  # S is the total number of "brackets" where the metric is evaluated against previous runs. 
       },
   }
 
@@ -143,8 +116,8 @@ def main():
   #   CALL THIS FILE WITH:  WANDB_DISABLE_SERVICE=true python v5_mosaic_hyperparam_sweep.py
 
   sweep_id = wandb.sweep(sweep=sweep_configuration, project="vpt-t5-sweeps-v3")
-  print(sweep_id, colored("sweep_id", "green"))
-  wandb.agent(sweep_id=sweep_id, count=sweep_configuration['parameters']['max_run_to_try'], function=train)
+  print(colored(f"sweep_id: {sweep_id}", "green"))
+  wandb.agent(sweep_id=sweep_id, count=MAX_SWEEP_RUNS_TO_TRY, function=train)
 
 
 def train(config=None):
@@ -152,7 +125,32 @@ def train(config=None):
   with wandb.init(config=config):
     config = wandb.config
 
-    config.update({'allow_val_change': True})  # something about dataloaders??
+    print("PRINTING THE CONFIG")
+    print(config)
+
+    # BATCH_NAME = "handpicked_downloads"
+    # MODEL_VERSION_NAME = 'feb_25_half_half_handpicked'
+
+    # config.update({
+    #     'learning_rate': config.learning_rate,
+    #     'batch_name': config.batch_name,
+    #     'eval_dataset_filepath': config.eval_dataset_filepath,
+    #     'train_dataset_filepath': config.train_dataset_filepath,
+    #     'model_save_path': config.model_save_path,
+    #     'allow_val_change': True
+    # })
+
+    config.update({
+        'batch_size': 1,
+        'base_dir': BASE_DIR,
+        'model_version_name': MODEL_VERSION_NAME,
+        'batch_name': BATCH_NAME,
+        'train_dataset_filepath': f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}',
+        'eval_dataset_filepath': f'{BASE_DIR}/CLIP_encode_results_{BATCH_NAME}/.queries/eval',
+        'model_save_path': f'{BASE_DIR}/MODEL_CHECKPOINTS/{MODEL_VERSION_NAME}',
+        'min_delta': 0.001,
+        'max_sweep_runs_to_try': MAX_SWEEP_RUNS_TO_TRY,
+    })
 
     model = VPT_model(model_huggingface_name=config.model_huggingface_name, model_version_name=config.model_version_name)
 
@@ -231,7 +229,9 @@ def train(config=None):
     #     'verbose': True
     # }
 
-    cosine_lr_schedule = optim.CosineAnnealingWithWarmupScheduler(t_warmup=Time.from_batch(config.cosine_warmup_batches))
+    # final learning rate is 10% of the maximal LR (as in Llama from FB).
+    # consider settint t_max - the duration of the scheduler default "1dur", to something consistent, like 25k batches... so it's not a factor in SWEEPS.
+    cosine_lr_schedule = optim.CosineAnnealingWithWarmupScheduler(t_warmup=Time.from_batch(config.cosine_warmup_batches), alpha_f=0.1)
 
     # alibi attention https://docs.mosaicml.com/en/v0.11.1/method_cards/alibi.html
     # only directly supported for GPT and BERT.
@@ -245,13 +245,13 @@ def train(config=None):
     torch_trace_dir = 'torch_profiler'
 
     # todo still testing this
-    from composer.callbacks import EarlyStopper, ThresholdStopper
+    from composer.callbacks import EarlyStopper, SpeedMonitor, ThresholdStopper
     early_stopper = EarlyStopper(monitor="val_loss_cross_entropy", dataloader_label="eval", patience="700ba", min_delta=config.min_delta)
 
     threshold_stopper = ThresholdStopper(
         monitor="val_loss_cross_entropy",
         dataloader_label="eval",
-        threshold=3.25,
+        threshold=2.00,
     )
 
     trainer = Trainer(
@@ -263,13 +263,14 @@ def train(config=None):
         run_name=f'{config.model_version_name}',
         save_folder=f"{config.base_dir}/{config.model_version_name}/checkpoints",
         # max_duration="20000sp",  # 20k samples.. batches seems like it wasn't working!
-        max_duration="10000ba",  # 20k samples.. batches seems like it wasn't working!
+        max_duration="15000ba",  # 20k samples.. batches seems like it wasn't working!
+        # max_duration="20ba",  # 20k samples.. batches seems like it wasn't working!
         save_interval="40000ba",  # 20k batches
         # save_filename="ep{epoch}.pt",
         save_num_checkpoints_to_keep=0,
         schedulers=[cosine_lr_schedule],
         # loggers=[wandb_logger],
-        callbacks=[early_stopper, threshold_stopper],
+        callbacks=[SpeedMonitor(), early_stopper, threshold_stopper],
         device_train_microbatch_size=1,  #'auto',
         precision='amp_bf16',  # also works: fp32
         eval_interval="4ep",  # NEVER EVAL
