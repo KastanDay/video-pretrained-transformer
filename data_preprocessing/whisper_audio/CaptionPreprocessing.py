@@ -19,23 +19,26 @@ sys.path.append("lhotse_faster_whisper/lhotse")
 sys.path.append("lhotse_faster_whisper")
 import jsonlines
 import torch
-from lhotse import (Recording, RecordingSet, align_with_torchaudio,
-                    annotator_lhotse)
+from lhotse import (Recording, RecordingSet, align_with_torchaudio, annotator_lhotse)
 from pydub import AudioSegment
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
 
 
 class CaptionPreprocessing:
   # Takes in a path to an mp4 file, converts it to wav
-  def __init__(self, debug=False, device: str = None):
+  def __init__(self, debug: bool = False, device: str = ''):
     # self.final_whisper_results_jsonl = final_whisper_results_jsonl
     self.debug = debug
     if device:
       self.device_for_whisper = device
-      self.device_for_torchaudio_align = "cpu"
+      self.device_for_torchaudio_align = device
+      # self.device_for_torchaudio_align = "cpu"
     else:
       # return GPUs with at least 20% free memory (100% - maxMemory)
       try:
         cuda_id = GPUtil.getAvailable(order='memory', limit=1, maxMemory=0.8)[0]
+        print(GPUtil.getAvailable(order='memory', limit=2, maxMemory=0.8))
         self.device_for_whisper = f"cuda:{cuda_id}" if torch.cuda.is_available() else "cpu"
         self.device_for_torchaudio_align = f"cuda:{cuda_id}" if torch.cuda.is_available() else "cpu"
       except IndexError as e:
