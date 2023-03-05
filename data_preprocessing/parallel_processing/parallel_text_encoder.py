@@ -44,8 +44,7 @@ INPUT_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_whisper_results
 RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_text_encode_results_{BATCH_NAME}'
 
 NUM_GPUS = 1
-# NUM_PARALLEL_PROCESSES = 16
-NUM_PARALLEL_PROCESSES = 2
+NUM_PARALLEL_PROCESSES = 16  # 16 works on 4090, but util is average 5%.
 NUM_CPU_CORES = psutil.cpu_count()
 BATCH_SIZE = 512
 
@@ -73,7 +72,7 @@ class ParallelEncode:
   @ray.method(num_returns=1)
   def populate_work_queue(self,):
     print('starting queue')
-    ds = dl.load(RESULTS_DATASET_PATH)
+    ds = dl.load(RESULTS_DATASET_PATH, read_only=True)  # read-only enables multiple to be open at once.
     print('ds loaded in queue')
     max_len = ds.max_len
     for i, sample in enumerate(ds):
@@ -95,7 +94,7 @@ class ParallelEncode:
     """
     Main function for parallel whisper.
     """
-    process = FlanT5Encoder()
+    process = FlanT5Encoder(device="cuda:0")
     while self.work_queue.qsize() > 0:
       start = time.monotonic()
       print(f"📌 {self.work_queue.qsize()} batches remaining")
@@ -178,8 +177,9 @@ def main():
   index_caption_pairs = []  # list of: {'db_index': int, 'caption': str}
   # todo: check for completed segments (that already have a caption_embedding)
   if os.path.exists(RESULTS_DATASET_PATH):
-    ds = dl.load(RESULTS_DATASET_PATH)
-    print(ds.summary())
+    pass
+    # ds = dl.load(RESULTS_DATASET_PATH)
+    # print(ds.summary())
     # index_caption_pairs = filter_completed_text_encodes(ds)
 
   else:
@@ -196,10 +196,12 @@ def main():
     with output_ds:
       print("Prepopulating `caption_embedding` tensor with custom-tokenized np.zeros((custom_token_len, 1024).")
       print(output_ds.summary())
-      populate_ds_with_zeros().eval(output_ds, scheduler="ray", num_workers=NUM_PARALLEL_PROCESSES, skip_ok=True)
+      populate_ds_with_zeros().eval(output_ds, scheduler="ray", num_workers=NUM_CPU_CORES, skip_ok=True)
       print("Output ds after prepopulating")
       print(output_ds.summary())
-      # print(colored(f"TODO: I need to write code to populate index_caption_pairs", "red", attrs=["reverse", "bold"]))
+
+    del output_ds  # hopefully this closes connection?
+    # print(colored(f"TODO: I need to write code to populate index_caption_pairs", "red", attrs=["reverse", "bold"]))
 
     # parallel_filter_completed_text_encodes().eval(output_ds,
     #                                               scheduler="ray",
@@ -232,7 +234,7 @@ def main():
   #         attrs=["reverse", "bold"],
   #     ))
 
-  ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False, ignore_reinit_error=True)  # , num_gpus = 1
+  ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False, ignore_reinit_error=True)
   print_cluster_stats()
 
   # only launch set number of workers, they all pull from the same work queue.

@@ -25,8 +25,7 @@ from termcolor import colored
 class DeeplakeManager():
 
   def __init__(self, preprocessor_type=None, database_path=None, upload_queue=None):
-    assert preprocessor_type in ['whisper', 'clip',
-                                 'text-encode'], "only these modes are supported. Due to custom upload function for each."
+    assert preprocessor_type in ['whisper', 'clip', 'text-encode'], "only these modes are supported due to custom upload function for each."
 
     ray.init('auto', ignore_reinit_error=True)  # todo: connect to existing ray cluster...
 
@@ -146,11 +145,17 @@ class DeeplakeManager():
   def _text_encode_results_to_deeplake(self):
     try:
       with self.ds:
+        print("Is the db in read only mode?", self.ds.read_only)
+        # print("Info about dataset", self.ds.info)
+        # print("is this a view?", self.ds.is_view)
+        # print("get views?", self.ds.get_views())
+        print()
+        print()
         while self.upload_queue.qsize() > 0:
           print("👉⬆️ Upload queue size:", self.upload_queue.qsize(), "⬆️👈")
           print(" STARTING AN ACTUAL UPLOAD... ")
           start = time.monotonic()
-          caption_embed_dict_list = self.upload_queue.get(block=True)
+          caption_embed_dict_list = self.upload_queue.get(block=True, timeout=120)
           for input_dict in caption_embed_dict_list:
 
             # True and true :)
@@ -163,14 +168,14 @@ class DeeplakeManager():
             # assert check_continuity(input_dict['db_index']), print("db_index must be continuous. This batch is not contiguous in Deeplake.")
             # assert last_idx-first_idx == (len(input_dict['frames'])), print(f"Length of frames {len(input_dict['frames'])} must equal {last_idx}-{first_idx} = {last_idx - first_idx}")
 
-            # TODO:
             self.ds.caption_embedding[input_dict['db_index']] = input_dict['last_hidden_states']
           print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
           print(
               f"⬆️⬆️ Time to upload text-batch: {(time.monotonic() - start)/60:.2f} minutes. (time/segment): {((time.monotonic() - start)/len(caption_embed_dict_list)):.2f} sec"
           )
-          print(self.ds.summary())
-          self.ds.flush()
+          # remove flush, faster perf hopefully.
+          # print(self.ds.summary())
+          # self.ds.flush()
     except Exception as e:
       print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
       pprint.pprint(input_dict)
