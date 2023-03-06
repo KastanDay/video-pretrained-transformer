@@ -118,10 +118,8 @@ class ParallelEncode:
         print("❌❌Error during text-encode: ", e)
         traceback.print_exc()
         # pprint.pprint(caption_embed_dict_list)
-      print(
-          f"⏰ Time to Text-encode file: {(time.monotonic() - start)/60:.2f} minutes. (time/segment): {((time.monotonic() - start)/BATCH_SIZE):.2f} sec"
-      )
-    return 0
+      print(f"⏰ Time to Text-encode file: {(time.monotonic() - start)/60:.2f} minutes."
+            "(time/segment): {((time.monotonic() - start)/BATCH_SIZE):.2f} sec")
 
 
 @dl.compute

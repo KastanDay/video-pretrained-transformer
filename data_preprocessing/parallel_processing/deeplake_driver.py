@@ -30,7 +30,7 @@ class DeeplakeManager():
     ray.init('auto', ignore_reinit_error=True)  # todo: connect to existing ray cluster...
 
     # open and persist DB connection
-    self.ds = dl.load(database_path)
+    self.ds = dl.load(database_path, read_only=False, memory_cache_size=10_737)  # 10 GiB in MB
     print(self.ds.summary())
     self.upload_queue = upload_queue
     self.start_upload_driver(preprocessor_type)
@@ -57,7 +57,7 @@ class DeeplakeManager():
     elif preprocessor_type == 'clip':
       while True:
         self._clip_encode_results_to_deeplake()
-        time.sleep(3)
+        time.sleep(0.01)
     elif preprocessor_type == 'text-encode':
       while True:  # continuously check upload queue
         self._text_encode_results_to_deeplake()

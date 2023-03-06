@@ -45,7 +45,8 @@ class ClipEncoder:
     self.device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using {self.device}...")
 
-    self.clip = CLIPVisionModel.from_pretrained(MODEL_SIZE).to(self.device)
+    # todo: It looks like the huggingface model doesn't support fp16?? Or BF16? Only the FLAX model does.
+    self.clip = CLIPVisionModel.from_pretrained(MODEL_SIZE, torch_dtype=torch.float32).to(self.device)
     self.clip_preprocess = CLIPProcessor.from_pretrained(MODEL_SIZE)
 
     # self.clip, self.clip_preprocess = clip.load(MODEL_SIZE, self.device)

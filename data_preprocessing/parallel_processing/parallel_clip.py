@@ -15,6 +15,7 @@ import deeplake as dl
 import jsonlines
 import more_itertools
 import numpy as np
+import psutil
 import ray
 from clip_encoder import ClipEncoder
 from deeplake_driver import DeeplakeManager
@@ -58,8 +59,8 @@ RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_CLIP_encode_r
 # NUM_GPUS = 4          # Number of physical GPUs to use (use max)
 # GPU_PER_PROCESS = 1/5 # threads per GPU, limited by OOM errors while also maximizing spread.
 
-NUM_PARALLEL_PROCESSES = 1  # Number of parallel processes (limited by DRAM and SRAM)
-NUM_CPU_CORES = 12  # Numer of available physical cores to use (use max!)
+NUM_PARALLEL_PROCESSES = 2  # More than 2 and the uploader can't keep up.
+NUM_CPU_CORES = psutil.cpu_count()  # Numer of available physical cores to use (use max!)
 NUM_GPUS = 1  # Number of physical GPUs to use (use max)
 GPU_PER_PROCESS = 1  # threads per GPU, limited by OOM errors while also maximizing spread.
 BATCH_SIZE = 30  # 30 * 2 threads. good on 11GB
@@ -83,9 +84,9 @@ class ParallelEncode:
     self.upload_queue = Queue()
     self.db_manager = DeeplakeManager.remote(preprocessor_type='clip', database_path=RESULTS_DATASET_PATH, upload_queue=self.upload_queue)
 
-    self.batches_to_do_queue = Queue()
+    self.work_queue = Queue()
     for batch in work_to_do_list:
-      self.batches_to_do_queue.put(batch)
+      self.work_queue.put(batch)
 
   @ray.method(concurrency_group="parallel_whisper_instances")
   def parallel_clip_encode(self):
@@ -94,9 +95,9 @@ class ParallelEncode:
     '''
     start = time.monotonic()
     process = ClipEncoder(debug=False)
-    while self.batches_to_do_queue.qsize() > 0:
-      print(f"📌 {self.batches_to_do_queue.qsize()} batches remaining")
-      batch = self.batches_to_do_queue.get(block=True)
+    while self.work_queue.qsize() > 0:
+      print(f"📌 {self.work_queue.qsize()} batches remaining")
+      batch = self.work_queue.get(block=True)
       try:
         results_dict = process.run_clip_one_batch(batch)
         self.upload_queue.put(results_dict)  # nearly instant, v fast 🏎💨
@@ -118,7 +119,7 @@ def main():
   # print(colored(f"👉 Warning always creating new dataset", "yellow", attrs=["reverse", "bold"]))
   if os.path.exists(RESULTS_DATASET_PATH):
     print(f"Loading existing dataset from {RESULTS_DATASET_PATH}")
-    ds = dl.load(RESULTS_DATASET_PATH)
+    ds = dl.load(RESULTS_DATASET_PATH, read_only=True)
     segment_batch_list = add_samples_to_dict(ds, do_filtering=True)
   else:
     # create dataset
@@ -177,6 +178,11 @@ def main():
   all_done = ray.get([parallel_encode.parallel_clip_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)])
   print("Len of all threads: ", len(all_done))
   print("👉 Completed compute.")
+
+  while parallel_encode.upload_queue.qsize() > 0 or parallel_encode.work_queue.qsize() > 0:
+    print("Still uploading files, sleeping 5 seconds..")
+    time.sleep(5)
+  print("✅ All work and uploads should be done, exiting!")
   return
 
 

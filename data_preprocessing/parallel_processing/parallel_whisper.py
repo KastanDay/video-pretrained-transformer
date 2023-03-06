@@ -45,7 +45,7 @@ LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
 # LOCAL_VIDEO_DIR = f'/tmp/{BATCH_NAME}'  # used for wavs
 
 NUM_GPUS = 2
-NUM_PARALLEL_INSTANCES = 8  # 2 for 1080ti, 6 for 4090.
+NUM_PARALLEL_INSTANCES = 2  # 2 for 1080ti, 6 for 4090.
 NUM_CPU_CORES = psutil.cpu_count()
 
 
@@ -70,7 +70,7 @@ class ParallelWhisper:
     from CaptionPreprocessing import CaptionPreprocessing
 
     # print("WARNING HARD CODING CUDA:1")
-    process = CaptionPreprocessing()  #(device='cuda:0')
+    process = CaptionPreprocessing(device='cuda:1')
     for file in file_batch:
       start = time.monotonic()
       try:
@@ -167,7 +167,7 @@ def main():
   if os.path.exists(WHISPER_RESULTS_DATASET_PATH):
     # Filter files that we need to process
     print(f'Number of files before filtering completed files {len(files)}')
-    ds_completed = dl.load(WHISPER_RESULTS_DATASET_PATH)
+    ds_completed = dl.load(WHISPER_RESULTS_DATASET_PATH, read_only=True)
     ds_completed.summary()
     try:
       completed_videos = set()

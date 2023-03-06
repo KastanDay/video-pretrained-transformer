@@ -23,7 +23,7 @@ class FlanT5Encoder:
     self.device = device if torch.cuda.is_available() else "cpu"
     print("In FlanT5Encoder", self.device)
     self.tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-large")
-    self.model = T5EncoderModel.from_pretrained("google/flan-t5-large", torch_dtype=torch.float32).to(self.device)
+    self.model = T5EncoderModel.from_pretrained("google/flan-t5-large", torch_dtype=torch.float16).to(self.device)
     # self.model = T5EncoderModel.from_pretrained(
     #     "google/flan-t5-large",
     #     # set device_map to only cuda:0
