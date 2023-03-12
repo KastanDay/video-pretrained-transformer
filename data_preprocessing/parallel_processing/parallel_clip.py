@@ -59,7 +59,7 @@ RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_CLIP_encode_r
 # NUM_GPUS = 4          # Number of physical GPUs to use (use max)
 # GPU_PER_PROCESS = 1/5 # threads per GPU, limited by OOM errors while also maximizing spread.
 
-NUM_PARALLEL_PROCESSES = 2  # More than 2 and the uploader can't keep up.
+NUM_PARALLEL_PROCESSES = 1  # More than 2 and the uploader can't keep up.
 NUM_CPU_CORES = psutil.cpu_count()  # Numer of available physical cores to use (use max!)
 NUM_GPUS = 1  # Number of physical GPUs to use (use max)
 GPU_PER_PROCESS = 1  # threads per GPU, limited by OOM errors while also maximizing spread.
@@ -97,7 +97,7 @@ class ParallelEncode:
     process = ClipEncoder(debug=False)
     while self.work_queue.qsize() > 0:
       print(f"📌 {self.work_queue.qsize()} batches remaining")
-      batch = self.work_queue.get(block=True)
+      batch = self.work_queue.get(block=True, timeout=120)
       try:
         results_dict = process.run_clip_one_batch(batch)
         self.upload_queue.put(results_dict)  # nearly instant, v fast 🏎💨
@@ -110,6 +110,18 @@ class ParallelEncode:
       )
       start = time.monotonic()
     print(f"Worker done in {inspect.currentframe().f_code.co_name} (work queue empty), exiting! 😎")
+
+  def get_upload_queue_size(self):
+    '''
+    These 'get queue size' are used in main() to ensure we finish all work before exiting.
+    '''
+    return self.upload_queue.qsize()
+
+  def get_work_queue_size(self):
+    '''
+    These 'get queue size' are used in main() to ensure we finish all work before exiting.
+    '''
+    return self.work_queue.qsize()
 
 
 def main():
@@ -179,7 +191,10 @@ def main():
   print("Len of all threads: ", len(all_done))
   print("👉 Completed compute.")
 
-  while parallel_encode.upload_queue.qsize() > 0 or parallel_encode.work_queue.qsize() > 0:
+  ## THIS is the best way to ensure work is done before exiting. Particularly uploading.
+  while ray.get(parallel_encode.get_upload_queue_size.remote()) > 0 or ray.get(parallel_encode.get_work_queue_size.remote()) > 0:
+    print("Deeplake upload queue size", ray.get(parallel_encode.get_upload_queue_size.remote()))
+    print("CLIP work queue size", ray.get(parallel_encode.get_work_queue_size.remote()))
     print("Still uploading files, sleeping 5 seconds..")
     time.sleep(5)
   print("✅ All work and uploads should be done, exiting!")

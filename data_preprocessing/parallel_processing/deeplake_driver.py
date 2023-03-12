@@ -119,7 +119,7 @@ class DeeplakeManager():
         print("✅ SUCCESSFULLY caught up to Queue size for Deeplake! ✅")
         print(self.ds.summary())
         print("Queue size (should be zero):", self.upload_queue.qsize())
-        self.ds.flush()
+        self.ds.flush()  # too time consuming. Probably not necessary? Should happen.. on program exit?
     except Exception as e:
       print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
       # pprint.pprint(results)

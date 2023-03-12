@@ -121,6 +121,18 @@ class ParallelEncode:
       print(f"⏰ Time to Text-encode file: {(time.monotonic() - start)/60:.2f} minutes."
             "(time/segment): {((time.monotonic() - start)/BATCH_SIZE):.2f} sec")
 
+  def get_upload_queue_size(self):
+    '''
+    These 'get queue size' are used in main() to ensure we finish all work before exiting.
+    '''
+    return self.upload_queue.qsize()
+
+  def get_work_queue_size(self):
+    '''
+    These 'get queue size' are used in main() to ensure we finish all work before exiting.
+    '''
+    return self.work_queue.qsize()
+
 
 @dl.compute
 def populate_ds_with_zeros(sample_in, sample_out):
@@ -243,6 +255,14 @@ def main():
   all_done_futures = [parallel_encode.parallel_text_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)]
   all_done = ray.get(all_done_futures)
   all_done.append(ray.get(populate_work_queue_future))
+
+  ## THIS is the best way to ensure work is done before exiting.
+  while ray.get(parallel_encode.get_upload_queue_size.remote()) > 0 or ray.get(parallel_encode.get_work_queue_size.remote()) > 0:
+    print("Deeplake upload queue size", ray.get(parallel_encode.get_upload_queue_size.remote()))
+    print("Text-encode work queue size", ray.get(parallel_encode.get_work_queue_size.remote()))
+    print("Still uploading files, sleeping 5 seconds..")
+    time.sleep(5)
+  print("✅ All work and uploads should be done, exiting!")
 
   print("Len of all threads: ", len(all_done))
   print("👉 Completed, finished main().")
