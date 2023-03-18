@@ -1,10 +1,13 @@
 # 📃 Intuition
-I'm building my own multi media GPT; a competitor to [Merlot Reserve](https://rowanzellers.com/merlotreserve/) & [X-CLIP](https://huggingface.co/docs/transformers/model_doc/xclip). It's pre-trained from scratch on youtube data, mostly the YT-1B dataset of 20M curated youtube videos containing significant spoken language (english only).
+I'm building my own multi media GPT; a competitor to [Merlot Reserve](https://rowanzellers.com/merlotreserve/) & [Vid2Seq](https://arxiv.org/abs/2302.14115). It's pre-trained from scratch on youtube data, mostly the YT-1B dataset of 20M curated youtube videos containing significant spoken language (English only).
+
+Project highlights & intuition with photos, check it out: https://twitter.com/KastanDay/status/1595991960380411905
 
 ![(No 3D) VPT Architecture Diagram](https://user-images.githubusercontent.com/13607221/212575351-17d9b963-1f33-47cc-a298-db36e9814411.png)
 
-I posted a thread on Twitter describing the intuition (with lots of photos), check it out here: https://twitter.com/KastanDay/status/1595991960380411905
+My design follows the "Embedding + Trunk + Head" pattern I first noticed succeeding in DETER and Alphafold2. Now in early 2023, it's successful in [PALM-E](https://arxiv.org/abs/2303.03378) and [Vid2Seq](https://arxiv.org/abs/2302.14115) from Google, and [Prismer](https://arxiv.org/abs/2303.02506) from Nvidia, and many more listed on my Twitter announcement.
 
+<img src="https://user-images.githubusercontent.com/13607221/226117873-3a824b72-9407-4fe1-9cd7-5b969e8a91a2.png" width="800">
 
 # 🚀 Quickstart
 
@@ -51,17 +54,18 @@ git submodule update --remote
 
 We have submodules in the first place because we needed to modify the internal logic of three libraries used in preprocessing: Lhotse (to be faster), OpenPSG, and Transformers to modify the T5 implementation to suport modality encodings.
 
-Done!
+Install is complete!
 
-## Progress
+## Progress 
 1. (Oct 2022) Start of project.
-2. (Dec 2022) MVP completed, but messed up the evaluation. 
-3. (Dec 2022) Migrated all data to Deeplake database library, overall much cleaner & more reliable than working with raw numpy arrays.
+2. (Dec 2022) MVP completed, but messed up the evaluation.
+3. (Dec 2022) Migrated all data to Deeplake database library, overall much cleaner & more reliable for distributed database updates.
 4. (Jan 2023) Migrated all training logic to Composer, by MosaicML. Super cool library for efficient LLM training, even of huggingface models.
-5. (Jan 2023) WIP: Finish scaling up distributed pre-processing (i.e. inference w/ Whisper, FlanT5, OpenPSG and Clip)
+5. (Jan 2023) Finished scaling up distributed pre-processing (i.e. inference w/ Whisper, FlanT5, OpenS and Clip). Rock solid Deeplake distributed `dataset.append()` operations on any size SLURM cluster.
+6. (Feb 2023) Tested different backbones: T5 vs T5 v1.1 vs Flan-TS. Somehow, v1.1 was terrible and Flan-T5 was by far the best. As suggested by [another finetuning study](https://twitter.com/ShayneRedford/status/1620805305801261058). The author confirmed this in [my follow-up question](https://twitter.com/KastanDay/status/1620934244372738048).
+7. (Mar 2023) WIP: TVQA evaluation. Need to fit more video frames into our 1024 context window, probably by using fewer final hidden states from CLIP.
 
-Todo:
+Up next:
 
-- [ ] Fix evaluation on VQA benchmark; up next: TVQA.
-- [ ] Find better scene-graph implementation: just 55ish COCO classes is not enough, best we can do is 1k imagenet classes I think. 
-- [ ] Totally reimplement sound/audio model.
+- [ ] Find better scene-graph implementation: conly 55 classes from COCO is not enough for YouTube data. Ours relies on Detectron2 as a base, which is great for in-domain objects but not general. I think the best we can do is to use the 1k classes from imagenet.
+- [ ] Totally reimplement sound/audio model to move away from Whisper -- I think [Google's AudioSet](https://research.google.com/audioset/ontology/index.html) with 600+ classes based on YouTube data, will enable the best models. [Here's my favorite](https://github.com/qiuqiangkong/audioset_tagging_cnn#audio-tagging-using-pretrained-models) from that competition.
