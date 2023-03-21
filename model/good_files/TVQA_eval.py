@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import sys
 from typing import Dict, List
 
 import numpy as np
@@ -8,6 +9,14 @@ import torch
 
 os.environ['TRANSFORMERS_CACHE'] = '/mnt/teton/utils/cache/huggingface'
 os.environ['HF_DATASETS_CACHE'] = '/mnt/teton/utils/cache/datasets'
+
+# add to python path
+
+# append to python path "../../data_preprocessing/parallel_processing"
+sys.path.append("../../data_preprocessing/parallel_processing")
+
+from clip_encoder import ClipEncoder
+from text_encoder import FlanT5Encoder
 
 
 class TVQA_eval():
@@ -23,6 +32,10 @@ class TVQA_eval():
     with open(subtitles_filepath, 'r') as f:
       self.subtitles = [json.loads(line) for line in f]
     # len(subtitles)  # 21,793
+
+    # instantiate expert models
+    self.clip_encoder = ClipEncoder()
+    self.text_encoder = FlanT5Encoder()
 
     # from transformers import AutoTokenizer, T5ForConditionalGeneration
 
@@ -75,9 +88,13 @@ class TVQA_eval():
 
   def vid_name_to_frames_path(self, vid_name):
     '''
-    # house_s02e05_seg02_clip_11
-    # show_name_path = house_frames
-    # clip_name_path = s02e05_seg02_clip_11
+    Example:
+    vid_name: house_s02e05_seg02_clip_11
+    
+    show_name_path = house_frames
+    clip_name_path = s02e05_seg02_clip_11
+    
+    returns: /mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq/house_frames/s02e05_seg02_clip_11
     '''
 
     show_name, clip_name_path = vid_name.split('_', 1)[0], vid_name.split('_', 1)[1]
@@ -87,19 +104,20 @@ class TVQA_eval():
     else:
       show_name_path = self.vid_name_prefix_to_path[show_name]
 
-    print(show_name_path, clip_name_path)
-
     frames_dir = os.path.join('/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq', show_name_path, clip_name_path)
-
-    # todo need to pick some subset of frames to use inside this folder.
-    # get all files in this folder
-    frames = os.listdir(frames_dir)
     return frames_dir
 
   def get_clip_embed_from_vid_name(self, vid_name, start_time, end_time):
     base_frames_filepath = pathlib.Path("/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq")
     # collect all frames from filepath
     pathlib.Path(base_frames_filepath / vid_name).glob('*.jpg')
+    frames_path = self.vid_name_to_frames_path(vid_name)
+    segment_frames = pathlib.Path(frames_path).glob('*.jpg')
+
+    clip_embeddings = self.clip_encoder.TVQA_eval_run_clip_one_batch(segment_frames)
+
+    return clip_embeddings
+
     # Castle avg frames/clip = 274.7973615917
     # BBT avg frames/clip = 186.3853298404
 
