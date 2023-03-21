@@ -100,9 +100,6 @@ class TVQA_eval():
         for ans_candidate in [qa['a0'], qa['a1'], qa['a2'], qa['a3'], qa['a4']]
     ]
 
-
-  
-
   def vid_name_to_frames_path(self, vid_name):
     '''
     Example:
