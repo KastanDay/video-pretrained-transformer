@@ -5,6 +5,7 @@ import sys
 from typing import Dict, List
 
 import numpy as np
+import pandas as pd
 import torch
 
 os.environ['TRANSFORMERS_CACHE'] = '/mnt/teton/utils/cache/huggingface'
@@ -30,7 +31,9 @@ class TVQA_eval():
 
     subtitles_filepath = "/mnt/teton/vpt/data/benchmark_datasets/TVQA/TVQA/data/tvqa_preprocessed_subtitles.jsonl"
     with open(subtitles_filepath, 'r') as f:
-      self.subtitles = [json.loads(line) for line in f]
+      # self.subtitles = [json.loads(line) for line in f]
+      self.subtitles = pd.read_json(subtitles_filepath, lines=True)
+      self.subtitles = self.subtitles.set_index('vid_name')
     # len(subtitles)  # 21,793
 
     # instantiate expert models
@@ -62,29 +65,43 @@ class TVQA_eval():
         "": 'bbt_frames',  # no prefix at all used for bbt, it's the "default"
     }
 
-  def get_subtitle_from_clip(self, vid_name: str, start_time: float, end_time: float):
+
+  # Deprecated
+  def get_subtitle_from_clip(self, vid_name: str, ts: str):
+    start_time, end_time = ts.split('-')
     subtitle = ''
-    for sub in self.subtitles:
-      if sub['vid_name'] == vid_name:
-        for text in sub['sub']:
-          if text['start'] >= float(start_time - 1) and text['end'] <= float(end_time + 1):
-            subtitle += text['text'] + ' '
+    sub = self.subtitles.loc[vid_name]
+    for text in sub['sub']:
+      if text['start'] >= float(start_time) and text['end'] <= float(end_time):
+        subtitle += text['text'] + ' '
     return subtitle.strip()
+  
+  def get_all_subtitles(self, vid_name: str):
+    '''Returns a string with every subtitle from a given video'''
+    sub = ' '.join([_dict["text"] for _dict in self.subtitles.loc[vid_name]["sub"]])
+    return sub.strip()
+
 
   def qa_to_prompt(self, qa: Dict):
     '''
     TODO: update prompt to be VPT-compatible. 
     TODO: add </s> token to end of prompt... during training.
     '''
+    # In this version, we only get the subtitles relevant to the time stamp
+    # subtitle = self.get_subtitle_from_clip(qa['vid_name'], float(qa['ts'].split('-')[0]), float(qa['ts'].split('-')[-1]))
+    # In this version, we get all subtitles from the video
+    subtitle = self.get_all_subtitles(qa['vid_name'])
 
-    subtitle = self.get_subtitle_from_clip(qa['vid_name'], float(qa['ts'].split('-')[0]), float(qa['ts'].split('-')[-1]))
-
-    image_embed = self.get_clip_embed_from_vid_name(qa['vid_name'], float(qa['ts'].split('-')[0]), float(qa['ts'].split('-')[-1]))
+    # Should change this to all frames. Either way, this is irrelevant for this function
+    # image_embed = self.get_clip_embed_from_vid_name(qa['vid_name'], float(qa['ts'].split('-')[0]), float(qa['ts'].split('-')[-1]))
 
     return [
         f"Context: {subtitle}. Question: {qa['q']} Is it '{ans_candidate}'?"
         for ans_candidate in [qa['a0'], qa['a1'], qa['a2'], qa['a3'], qa['a4']]
     ]
+
+
+  
 
   def vid_name_to_frames_path(self, vid_name):
     '''
