@@ -3,10 +3,13 @@ import inspect
 import os
 import pathlib
 import time
+from typing import List
 
+import accelerate
 import cv2
 import lovely_tensors as lt
 import numpy as np
+import PIL
 import torch
 from decord import (  # best random-access video reader all the lands.
     VideoReader, cpu)
@@ -31,6 +34,7 @@ logging.set_verbosity_error()
 
 ### GLOBALS SET ME 😁 ###
 MODEL_SIZE = 'openai/clip-vit-large-patch14-336'  # Best models are (1st) ViT-L/14@336px and (2nd) ViT-L/14. I don't recommend going lower.
+# MODEL_SIZE = 'openai/clip-vit-base-patch32' # small model
 FRAME_SIZE_DIMENSION = 336
 NUM_FRAMES_TO_SAVE_PER_SEGMENT = 1
 
@@ -42,11 +46,15 @@ class ClipEncoder:
     self.num_frames_per_segment = num_frames_per_segment
 
     # Load the model
-    self.device = "cuda" if torch.cuda.is_available() else "cpu"
+    self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
     print(f"Using {self.device}...")
 
     # todo: It looks like the huggingface model doesn't support fp16?? Or BF16? Only the FLAX model does.
-    self.clip = CLIPVisionModel.from_pretrained(MODEL_SIZE, torch_dtype=torch.float32).to(self.device)
+    # device_map="sequential", max_memory={0: "24GiB", 1: "11GiB"} NOT SUPPORTED EITHER!! UGH.
+    self.clip = CLIPVisionModel.from_pretrained(
+        MODEL_SIZE,
+        torch_dtype=torch.float32,
+    ).to(self.device)
     self.clip_preprocess = CLIPProcessor.from_pretrained(MODEL_SIZE)
 
     # self.clip, self.clip_preprocess = clip.load(MODEL_SIZE, self.device)
@@ -55,13 +63,6 @@ class ClipEncoder:
 
     if self.debug:
       print(f"Done setting up CLIP...")
-
-  def TVQA_eval_run_clip_one_batch(self, some_batch):
-    '''
-    Todo: make this for TVQA. Already has frames, need to make sure I match the audio & frames together correctly. 
-    Might want to make text longer... need to find right frame & text resolution for evaluation. 
-    '''
-    raise NotImplementedError
 
   def run_clip_one_batch(self, batch_of_100_samples):
     '''
@@ -100,10 +101,12 @@ class ClipEncoder:
     }
     return results_dict
 
-  def run_clip(self, all_frames):
+  def run_clip(self, all_frames, only_return_pooled_embeds=False):
     '''
-    :param frames: list of np.ndarrays
-    :returns: np.ndarrays
+    :param frames: list of np.ndarrays, (or list of PIL images I think is fine)
+    :param only_return_pooled_embeds: bool -- if True, only return the pooled CLIP embeddings. Otherwise, return the pooled CLIP embeddings and the last hidden states.
+    
+    :returns: List[np.ndarrays]
     '''
     start_time = time.monotonic()
     # optional improvement: send in a list of images instead. Just worried about convert_RGB in that case...
@@ -115,16 +118,20 @@ class ClipEncoder:
     start_time = time.monotonic()
     with torch.inference_mode():  # even faster than no_grad()
       outputs = self.clip(**image_inputs, output_hidden_states=True, return_dict=True)
-      all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()  # (batch_size, hidden_size). FloatTensor
-      last_hidden_states = outputs['last_hidden_state'].cpu().numpy()  # (batch_size, sequence_length, hidden_size). FloatTensor
     if self.debug:
       print(f"⏰ CLIP Runtime on {len(all_frames)*self.num_frames_per_segment} images: {(time.monotonic() - start_time):.2f} seconds")
-      print("Clip all_pooled_clip_embeds.shape:")
-      print(all_pooled_clip_embeds.shape)
-      print("Clip last_hidden_states.shape:")
-      print(last_hidden_states.shape)
+      # print("Clip all_pooled_clip_embeds.shape:")
+      # print(all_pooled_clip_embeds.shape)
+      # print("Clip last_hidden_states.shape:")
+      # print(last_hidden_states.shape)
 
-    return all_pooled_clip_embeds, last_hidden_states
+    if only_return_pooled_embeds:
+      all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()
+      return all_pooled_clip_embeds
+    else:
+      all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()  # (batch_size, hidden_size). FloatTensor
+      last_hidden_states = outputs['last_hidden_state'].cpu().numpy()  # (batch_size, sequence_length, hidden_size). FloatTensor
+      return all_pooled_clip_embeds, last_hidden_states
 
 
 '''

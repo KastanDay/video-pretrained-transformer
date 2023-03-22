@@ -4,9 +4,11 @@ import pathlib
 import sys
 from typing import Dict, List
 
+import more_itertools
 import numpy as np
 import pandas as pd
 import torch
+from PIL import Image
 
 os.environ['TRANSFORMERS_CACHE'] = '/mnt/teton/utils/cache/huggingface'
 os.environ['HF_DATASETS_CACHE'] = '/mnt/teton/utils/cache/datasets'
@@ -37,8 +39,8 @@ class TVQA_eval():
     # len(subtitles)  # 21,793
 
     # instantiate expert models
-    self.clip_encoder = ClipEncoder()
-    self.text_encoder = FlanT5Encoder()
+    self.clip_encoder = ClipEncoder(debug=True)
+    # self.text_encoder = FlanT5Encoder()
 
     # from transformers import AutoTokenizer, T5ForConditionalGeneration
 
@@ -65,7 +67,6 @@ class TVQA_eval():
         "": 'bbt_frames',  # no prefix at all used for bbt, it's the "default"
     }
 
-
   # Deprecated
   def get_subtitle_from_clip(self, vid_name: str, ts: str):
     start_time, end_time = ts.split('-')
@@ -75,12 +76,11 @@ class TVQA_eval():
       if text['start'] >= float(start_time) and text['end'] <= float(end_time):
         subtitle += text['text'] + ' '
     return subtitle.strip()
-  
+
   def get_all_subtitles(self, vid_name: str):
     '''Returns a string with every subtitle from a given video'''
     sub = ' '.join([_dict["text"] for _dict in self.subtitles.loc[vid_name]["sub"]])
     return sub.strip()
-
 
   def qa_to_prompt(self, qa: Dict):
     '''
@@ -119,25 +119,41 @@ class TVQA_eval():
       show_name_path = self.vid_name_prefix_to_path[show_name]
 
     frames_dir = os.path.join('/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq', show_name_path, clip_name_path)
+    assert os.path.exists(frames_dir), f"frames_dir {frames_dir} does not exist"
+
     return frames_dir
 
   def get_clip_embed_from_vid_name(self, vid_name, start_time, end_time):
+    '''
+    ✅ Working
+    Input: vid_name (from the subtitles jsonl file)
+    Output: A list of clip embeddings for that video segment. There is a VARIABLE number of frames per "clip". 
+      * Castle avg frames/clip = 274.79
+      * BBT avg frames/clip    = 186.38
+    '''
     base_frames_filepath = pathlib.Path("/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq")
     # collect all frames from filepath
     pathlib.Path(base_frames_filepath / vid_name).glob('*.jpg')
-    frames_path = self.vid_name_to_frames_path(vid_name)
-    segment_frames = pathlib.Path(frames_path).glob('*.jpg')
+    frames_dir_path = self.vid_name_to_frames_path(vid_name)
+    segment_frames_paths = pathlib.Path(frames_dir_path).glob('*.jpg')
 
-    clip_embeddings = self.clip_encoder.TVQA_eval_run_clip_one_batch(segment_frames)
+    frames_PIL_list = []
+    for path in segment_frames_paths:
+      with Image.open(path) as img:
+        frames_PIL_list.append(np.array(img))
+
+    # split frames_PIL_list into batches of 100 (to avoid OOM)
+    batch_list = list(more_itertools.batched(frames_PIL_list, 100))
+
+    clip_embeddings = []
+    for batch in batch_list:
+      clip_embeddings.extend(self.clip_encoder.run_clip(batch, only_return_pooled_embeds=True))
 
     return clip_embeddings
 
-    # Castle avg frames/clip = 274.7973615917
-    # BBT avg frames/clip = 186.3853298404
-
   def get_flant5_embed_from_vid_name(self, vid_name, start_time, end_time):
     base_frames_filepath = "/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq"
-    base_frames_filepath
+    raise NotImplementedError
 
   def run_prompts_get_best_answer(self, prompts: List[str]):
     all_yes_scores = []
