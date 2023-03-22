@@ -13,13 +13,10 @@ from PIL import Image
 os.environ['TRANSFORMERS_CACHE'] = '/mnt/teton/utils/cache/huggingface'
 os.environ['HF_DATASETS_CACHE'] = '/mnt/teton/utils/cache/datasets'
 
-# add to python path
-
-# append to python path "../../data_preprocessing/parallel_processing"
 sys.path.append("../../data_preprocessing/parallel_processing")
-
 from clip_encoder import ClipEncoder
 from text_encoder import FlanT5Encoder
+
 
 class TVQA_eval():
 
@@ -39,14 +36,7 @@ class TVQA_eval():
 
     # instantiate expert models
     self.clip_encoder = ClipEncoder(debug=True)
-    # self.text_encoder = FlanT5Encoder()
-
-    # from transformers import AutoTokenizer, T5ForConditionalGeneration
-
-    # self.device = 'cuda:0'
-    # model_name = 'google/flan-t5-xl'
-    # self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-    # self.model = T5ForConditionalGeneration.from_pretrained(model_name).to(self.device)
+    self.text_encoder = FlanT5Encoder()
 
     self.tvqa_train_to_path = {
         "House M.D.": 'house_frames',
@@ -93,12 +83,12 @@ class TVQA_eval():
 
     # Should change this to all frames. Either way, this is irrelevant for this function
     # image_embed = self.get_clip_embed_from_vid_name(qa['vid_name'], float(qa['ts'].split('-')[0]), float(qa['ts'].split('-')[-1]))
-    
+
     return [
         f"Context: {subtitle}. Question: {qa['q']} Is it '{ans_candidate}'?"
         for ans_candidate in [qa['a0'], qa['a1'], qa['a2'], qa['a3'], qa['a4']]
     ]
-  
+
   def output_text_encoding(self, question_sample):
     '''
     param: 
@@ -124,7 +114,6 @@ class TVQA_eval():
       all_encodings.append(self.text_encoder.encode_tvqa(prompt))
     return all_encodings
 
-
   def combine_modality_encodings(self, text_encoding, image_encoding):
     '''Untested btw'''
     num_text_embeddings, _ = text_encoding.shape
@@ -137,7 +126,6 @@ class TVQA_eval():
     pad_size = (1024 - combined_tensor.shape[0], 1024)
     padded_tensor = torch.nn.functional.pad(combined_tensor, pad_size, value=-100)
     return padded_tensor
-
 
   def create_context_vectors(self, question):
     '''Combine the two vectors to create the context vector'''
@@ -152,20 +140,19 @@ class TVQA_eval():
       num_image_embeddings, _ = image_encoding.shape
       # Handling overflow... what a headache
       if (num_image_embeddings + num_text_embeddings) > 1024:
-        print(f"WARNING: Overflow on embeddings. There are {num_text_embeddings} text embeddings and {num_image_embeddings} image embeddings. Truncating subtitles...")
+        print(
+            f"WARNING: Overflow on embeddings. There are {num_text_embeddings} text embeddings and {num_image_embeddings} image embeddings. Truncating subtitles..."
+        )
         NUM_TO_DELETE = -1 * (1024 - num_image_embeddings - num_text_embeddings)
-        new_text_encoding = np.concatenate((text_encoding[:4], text_encoding[4+NUM_TO_DELETE:]), dim=1)
+        new_text_encoding = np.concatenate((text_encoding[:4], text_encoding[4 + NUM_TO_DELETE:]), dim=1)
         # Replace text encoding with the truncated one
         text_encodings[i] = new_text_encoding
-        assert num_image_embeddings + text_encodings[i].shape[0] == 1024, f"You fucked up! Text_encodings is of length {text_encodings[i].shape[0]} and image encodings {num_image_embeddings}"
-
+        assert num_image_embeddings + text_encodings[i].shape[
+            0] == 1024, f"You fucked up! Text_encodings is of length {text_encodings[i].shape[0]} and image encodings {num_image_embeddings}"
 
     for text_encoding in text_encodings:
       all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
     return all_context_vectors
-
-
-
 
   def vid_name_to_frames_path(self, vid_name):
     '''
@@ -198,12 +185,8 @@ class TVQA_eval():
       * Castle avg frames/clip = 274.79
       * BBT avg frames/clip    = 186.38
     '''
-    base_frames_filepath = pathlib.Path("/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq")
     # collect all frames from filepath
-    pathlib.Path(base_frames_filepath / vid_name).glob('*.jpg')
-    frames_dir_path = self.vid_name_to_frames_path(vid_name)
-    segment_frames_paths = pathlib.Path(frames_dir_path).glob('*.jpg')
-
+    segment_frames_paths = pathlib.Path(self.vid_name_to_frames_path(vid_name)).glob('*.jpg')
     frames_PIL_list = []
     for path in segment_frames_paths:
       with Image.open(path) as img:
@@ -215,7 +198,6 @@ class TVQA_eval():
     clip_embeddings = []
     for batch in batch_list:
       clip_embeddings.extend(self.clip_encoder.run_clip(batch, only_return_pooled_embeds=True))
-
     return clip_embeddings
 
   def get_flant5_embed_from_vid_name(self, vid_name, start_time, end_time):
