@@ -21,7 +21,6 @@ sys.path.append("../../data_preprocessing/parallel_processing")
 from clip_encoder import ClipEncoder
 from text_encoder import FlanT5Encoder
 
-
 class TVQA_eval():
 
   def __init__(self):
@@ -94,11 +93,79 @@ class TVQA_eval():
 
     # Should change this to all frames. Either way, this is irrelevant for this function
     # image_embed = self.get_clip_embed_from_vid_name(qa['vid_name'], float(qa['ts'].split('-')[0]), float(qa['ts'].split('-')[-1]))
-
+    
     return [
         f"Context: {subtitle}. Question: {qa['q']} Is it '{ans_candidate}'?"
         for ans_candidate in [qa['a0'], qa['a1'], qa['a2'], qa['a3'], qa['a4']]
     ]
+  
+  def output_text_encoding(self, question_sample):
+    '''
+    param: 
+    dictionary with 
+                  'a0',
+                  'a1',
+                  'a2',
+                  'a3',
+                  'a4',
+                  'answer_idx',
+                  'q',
+                  'qid',
+                  'show_name',
+                  'ts',
+                  'vid_name'
+
+    returns: list of last hidden state of encoding, (prompt, subtitles, answer) for each answer
+    '''
+
+    all_prompts = self.qa_to_prompt(question_sample)
+    all_encodings = []
+    for prompt in all_prompts:
+      all_encodings.append(self.text_encoder.encode_tvqa(prompt))
+    return all_encodings
+
+
+  def combine_modality_encodings(self, text_encoding, image_encoding):
+    '''Untested btw'''
+    num_text_embeddings, _ = text_encoding.shape
+    num_image_embeddings, _ = image_encoding.shape
+
+    assert num_image_embeddings + num_text_embeddings <= 1024, "the given encoding has more than 1024 embeddings!"
+
+    combined_tensor = torch.cat((text_encoding, image_encoding), dim=0)
+    # Pad the tensor with -100 to make it a [1024, 1024] tensor
+    pad_size = (1024 - combined_tensor.shape[0], 1024)
+    padded_tensor = torch.nn.functional.pad(combined_tensor, pad_size, value=-100)
+    return padded_tensor
+
+
+  def create_context_vectors(self, question):
+    '''Combine the two vectors to create the context vector'''
+    all_context_vectors = []
+    text_encodings = self.output_text_encodings(question)
+    image_encoding = self.output_image_incodings(question)
+    assert image_encoding < 1024, f"The given image encoding has more than 1024 embeddings! Number of embeddings: {image_encoding}"
+
+    # Handle possible overflows
+    for i, text_encoding in enumerate(text_encodings):
+      num_text_embeddings, _ = text_encoding.shape
+      num_image_embeddings, _ = image_encoding.shape
+      # Handling overflow... what a headache
+      if (num_image_embeddings + num_text_embeddings) > 1024:
+        print(f"WARNING: Overflow on embeddings. There are {num_text_embeddings} text embeddings and {num_image_embeddings} image embeddings. Truncating subtitles...")
+        NUM_TO_DELETE = -1 * (1024 - num_image_embeddings - num_text_embeddings)
+        new_text_encoding = np.concatenate((text_encoding[:4], text_encoding[4+NUM_TO_DELETE:]), dim=1)
+        # Replace text encoding with the truncated one
+        text_encodings[i] = new_text_encoding
+        assert num_image_embeddings + text_encodings[i].shape[0] == 1024, f"You fucked up! Text_encodings is of length {text_encodings[i].shape[0]} and image encodings {num_image_embeddings}"
+
+
+    for text_encoding in text_encodings:
+      all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
+    return all_context_vectors
+
+
+
 
   def vid_name_to_frames_path(self, vid_name):
     '''
