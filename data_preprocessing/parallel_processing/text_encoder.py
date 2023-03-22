@@ -60,3 +60,13 @@ class FlanT5Encoder:
       last_hidden_states_batch.append({'last_hidden_states': lhs, 'db_index': input_dict['db_index']})
     # return: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
     return last_hidden_states_batch
+  
+
+  def encode_tvqa(self, sentence):
+      # Tokenize the sentence and convert it to a PyTorch tensor
+      tokens = self.tokenizer(sentence, return_tensors="pt", padding=False, truncation=False).to(self.device)
+
+      # Generate the last hidden layer of the CLIP encoder
+      lhs = self.model(**tokens).last_hidden_state
+
+      return lhs.squeeze(0)
