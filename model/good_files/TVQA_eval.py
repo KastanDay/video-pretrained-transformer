@@ -96,7 +96,7 @@ class TVQA_eval():
     num_text_embeddings, _ = text_encoding.shape
     num_image_embeddings, _ = image_encoding.shape
 
-    assert num_image_embeddings + num_text_embeddings <= 1024, "the given encoding has more than 1024 embeddings!"
+    assert num_image_embeddings + num_text_embeddings <= 1024, f"the given encoding has more than 1024 embeddings! Text is {num_text_embeddings} and image is {num_image_embeddings}"
 
     combined_tensor = torch.cat((text_encoding, image_encoding), dim=0)
     # Pad the tensor with -100 to make it a [1024, 1024] tensor
@@ -104,7 +104,9 @@ class TVQA_eval():
     # There shouldn't be any padding left
     # pad_size = (1024 - combined_tensor.shape[0], 1024)
     # padded_tensor = torch.nn.functional.pad(combined_tensor, pad_size, value=-100)
-    assert combined_tensor == 1024, f"the combined encoding does not have exactly 1024 embeddings! Dimension: {combined_tensor.shape}"
+
+    # Reinsert 
+    assert combined_tensor.shape[0] == 1024, f"the combined encoding does not have exactly 1024 embeddings! Dimension: {combined_tensor.shape}"
 
     return combined_tensor
 
@@ -113,7 +115,7 @@ class TVQA_eval():
     try:
       all_context_vectors = []
       text_encodings = self.get_flant5_embed_from_vid_name(question)
-      image_encoding = self.vid_name_to_frames_path(question['vid_name'])  # this should be get_clip_embed_from_vid_name
+      image_encoding = self.get_clip_embed_from_vid_name(question['vid_name'])  # this should be get_clip_embed_from_vid_name
       for text_encoding in text_encodings:
         all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
       return all_context_vectors
@@ -121,6 +123,25 @@ class TVQA_eval():
       print(e)
       print(f"WARNING: Could not find video {question['vid_name']}. Skipping...")
 
+  def pad_or_truncate_tensor(self, tensor, truncate_shape):
+      target_shape = [truncate_shape, 1024]
+      tensor_shape = tensor.shape
+
+      # If tensor shape is larger than the target shape, truncate the tensor
+      if tensor_shape[0] > target_shape[0]:
+          truncated_tensor = tensor[:target_shape[0], :]
+          return truncated_tensor
+
+      # If tensor shape is smaller than the target shape, pad the tensor
+      elif tensor_shape[0] < target_shape[0]:
+          padding_shape = (target_shape[0] - tensor_shape[0], target_shape[1])
+          padded_tensor = torch.nn.functional.pad(tensor, (0, 0, 0, padding_shape[0]), value=-100)
+          return padded_tensor
+
+      # If tensor shape is already the target shape, return the tensor
+      else:
+          return tensor
+      
   def vid_name_to_frames_path(self, vid_name):
     '''
     Example:
@@ -178,7 +199,19 @@ class TVQA_eval():
     clip_embeddings = []
     for batch in batch_list:
       clip_embeddings.extend(self.clip_encoder.run_clip(batch, only_return_pooled_embeds=True))
-    return clip_embeddings
+
+
+    # Converting a list of tensors to a tensor
+    # Get the shape of the first tensor in the list
+    tensor_shape = clip_embeddings[0].shape
+    # Create a tensor of zeros with the appropriate shape
+    tensor = torch.zeros(len(clip_embeddings), *tensor_shape)
+    # Fill the tensor with the values from the input list
+    for i, t in enumerate(clip_embeddings):
+        tensor[i, ...] = t
+    fixed_tensor = self.pad_or_truncate_tensor(tensor, max_encodings_to_make)
+    fixed_tensor.cpu()
+    return fixed_tensor
 
   def get_flant5_embed_from_vid_name(self, question_sample, max_encodings_to_make=804):
     '''

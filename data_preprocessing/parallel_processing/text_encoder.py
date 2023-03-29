@@ -22,8 +22,8 @@ os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing t
 #   fp16 = torch.float16
 #   fp32 = torch.float32
 
-# chosen_datatype = torch.float16
-chosen_datatype = torch.float32
+chosen_datatype = torch.float16
+# chosen_datatype = torch.float32
 model_name = "google/flan-t5-small"
 
 
@@ -74,7 +74,7 @@ class FlanT5Encoder:
   def encode_tvqa(self, sentence, truncate_shape = 804):
       
       def pad_or_truncate_tensor(tensor):
-          target_shape = [804, truncate_shape]
+          target_shape = [truncate_shape, 1024]
           tensor_shape = tensor.shape
 
           # If tensor shape is larger than the target shape, truncate the tensor
@@ -100,4 +100,10 @@ class FlanT5Encoder:
 
       # Truncate or pad last hidden states
       truncated_states = pad_or_truncate_tensor(lhs.squeeze(0))
-      return truncated_states
+      truncated_states = truncated_states.cpu()
+      new_tensor = truncated_states
+      if model_name == "google/flan-t5-small":
+          new_tensor = torch.full((truncated_states.shape[0], 1024), -100)
+          # Copy the original tensor's values to the first 512 columns of the new tensor
+          new_tensor[:, :512] = truncated_states
+      return new_tensor
