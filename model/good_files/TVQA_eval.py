@@ -121,24 +121,6 @@ class TVQA_eval():
       print(e)
       print(f"WARNING: Could not find video {question['vid_name']}. Skipping...")
 
-    # OBSOLETE ... migrating to static encodings
-    # assert image_encoding < 1024, f"The given image encoding has more than 1024 embeddings! Number of embeddings: {image_encoding}"
-    # Handle possible overflows
-    # for i, text_encoding in enumerate(text_encodings):
-    #   num_text_embeddings, _ = text_encoding.shape
-    #   num_image_embeddings, _ = image_encoding.shape
-    #   # Handling overflow... what a headache
-    #   if (num_image_embeddings + num_text_embeddings) > 1024:
-    #     print(
-    #         f"WARNING: Overflow on embeddings. There are {num_text_embeddings} text embeddings and {num_image_embeddings} image embeddings. Truncating subtitles..."
-    #     )
-    #     NUM_TO_DELETE = -1 * (1024 - num_image_embeddings - num_text_embeddings)
-    #     new_text_encoding = np.concatenate((text_encoding[:4], text_encoding[4 + NUM_TO_DELETE:]), dim=1)
-    #     # Replace text encoding with the truncated one
-    #     text_encodings[i] = new_text_encoding
-    #     assert num_image_embeddings + text_encodings[i].shape[
-    #         0] == 1024, f"You fucked up! Text_encodings is of length {text_encodings[i].shape[0]} and image encodings {num_image_embeddings}"
-
   def vid_name_to_frames_path(self, vid_name):
     '''
     Example:
@@ -198,10 +180,10 @@ class TVQA_eval():
       clip_embeddings.extend(self.clip_encoder.run_clip(batch, only_return_pooled_embeds=True))
     return clip_embeddings
 
-  def get_flant5_embed_from_vid_name(self, question_sample: Dict[str, Any]):
+  def get_flant5_embed_from_vid_name(self, question_sample, max_encodings_to_make=804):
     '''
     param: 
-    dictionary with ['a0',  'a1',  'a2',  'a3', 'a4',    'answer_idx',   'q',   'qid',  'show_name', 'ts', 'vid_name'] as keys
+    question_sample is a dictionary with ['a0',  'a1',  'a2',  'a3', 'a4',    'answer_idx',   'q',   'qid',  'show_name', 'ts', 'vid_name'] as keys
 
     returns: list of last hidden state of encoding, (prompt, subtitles, answer) for each answer
     '''
@@ -210,7 +192,7 @@ class TVQA_eval():
     all_prompts = self.qa_to_prompt(question_sample)
     all_encodings = []
     for prompt in all_prompts:
-      all_encodings.append(self.text_encoder.encode_tvqa(prompt, 804))
+      all_encodings.append(self.text_encoder.encode_tvqa(prompt, truncate_shape=max_encodings_to_make))
     return all_encodings
 
   def run_prompts_get_best_answer(self, prompts: List[str]):
