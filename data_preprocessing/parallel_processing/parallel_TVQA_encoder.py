@@ -23,6 +23,18 @@ from text_encoder import FlanT5Encoder
 from tqdm import tqdm
 from transformers import T5Tokenizer
 
+os.environ['TRANSFORMERS_CACHE'] = '/mnt/teton/utils/cache/huggingface'
+os.environ['HF_DATASETS_CACHE'] = '/mnt/teton/utils/cache/datasets'
+
+# our own code
+from clip_encoder import ClipEncoder
+from text_encoder import FlanT5Encoder
+from TVQA_eval import TVQA_Eval
+
+# sys.path.append("../../model/good_files")
+# sys.path.append("../../model/good_files")
+# sys.path.append("/home/k/video-pretrained-transformer/model/good_files")
+
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
 
@@ -39,12 +51,11 @@ GLOBAL_TOKENIZER = T5Tokenizer.from_pretrained("google/flan-t5-xxl")
 # INPUT_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/whisper_results_bbt_audios"
 # RESULTS_DATASET_PATH = f"/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/feb_23_text_encode_results_{BATCH_NAME}"
 
-BATCH_NAME = 'yt1b-val'
-INPUT_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_whisper_results_{BATCH_NAME}'
-RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/yt-1b_deeplake/feb_25_text_encode_results_{BATCH_NAME}'
+BATCH_NAME = 'tvqa_whole'
+RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/mar_28_TVQA_encode_{BATCH_NAME}'
 
 NUM_GPUS = 1
-NUM_PARALLEL_PROCESSES = 16  # 16 works on 4090, but util is average 5%.
+NUM_PARALLEL_PROCESSES = 1  # 16 works on 4090, but util is average 5%.
 NUM_CPU_CORES = psutil.cpu_count()
 BATCH_SIZE = 512
 
@@ -64,23 +75,29 @@ class ParallelEncode:
     # Every parallel_caption_extraction writes to this queue. Then the uploader pulls from it. Magic.
     self.upload_queue = Queue()
     self.work_queue = Queue()
-    self.db_manager = DeeplakeManager.remote(preprocessor_type="text-encode",
+    self.db_manager = DeeplakeManager.remote(preprocessor_type="tvqa-encode",
                                              database_path=RESULTS_DATASET_PATH,
                                              upload_queue=self.upload_queue)
     return
 
   @ray.method(num_returns=1)
-  def populate_work_queue(self,):
-    print('starting queue')
-    ds = dl.load(RESULTS_DATASET_PATH, read_only=True)  # read-only enables multiple to be open at once.
-    print('ds loaded in queue')
-    max_len = ds.max_len
-    for i, sample in enumerate(ds):
-      if not sample.done_text_encode.data()['value']:
-        self.work_queue.put({'caption': sample.caption.text(), 'db_index': i})
-      if i % 100 == 0:
+  def populate_work_queue(self, train_filepath):
+    '''
+    Work queue looks like 1 row from train_qa_json.
+    Example:
+    {'a0': 'Cafeteria', 'a1': 'Hallway', 'a2': 'Car', 'a3': 'Patients room', 'a4': 'Outside', 'answer_idx': 4, 'q': 'Where is Meredith when George approaches her?', 'qid': 0, 'show_name': "Grey's Anatomy", 'ts': '76.01-84.2', 'vid_name': 'grey_s03e20_seg02_clip_14'}
+    '''
+
+    print(f'loading train_qa_json from: {train_filepath}')
+    with open(train_filepath, 'r') as f:
+      self.train_qa_json = [json.loads(line) for line in f]
+
+    print('Populating work queue')
+    for i, question in enumerate(self.train_qa_json):
+      self.work_queue.put(question)
+      if i - 1 % 100 == 0:
         print(f"📌 {self.work_queue.qsize()} batches. Still adding more...")
-    print("DONE POPULATING WORK QUEUE!")
+    print("✅ DONE POPULATING WORK QUEUE!")
 
     # block until work is done.
     while self.upload_queue.qsize() > 0 or self.work_queue.qsize() > 0:
@@ -90,32 +107,34 @@ class ParallelEncode:
     return 0
 
   @ray.method(concurrency_group="parallel_whisper_instances")
-  def parallel_text_encode(self):
+  def parallel_tvqa_encode(self):
     """
-    Main function for parallel whisper.
+    Main function for TVQA encoding.
     """
-    process = FlanT5Encoder(device="cuda:0")
+    tvqa_eval = TVQA_Eval()
+
     while self.work_queue.qsize() > 0:
       start = time.monotonic()
       print(f"📌 {self.work_queue.qsize()} batches remaining")
       try:
-        batch = self.work_queue.get(block=True, timeout=10)
+        train_sample = self.work_queue.get(block=True, timeout=10)
       except Exception as e:
         # it'll raise Empty after timeout, so just test while loop condition
         print("Temout waiting for work from work_queue. This is expected near end of job as workers finish.")
         continue
 
       try:
-        # returns: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
-        last_hidden_states_batch = process.encode(batch)
-        caption_embed_dict_list = []
-        for embed in last_hidden_states_batch:
-          caption_embed_dict_list.append({"db_index": embed["db_index"], "last_hidden_states": embed["last_hidden_states"]})
+        # RUN MAIN MODELS
+        context_vector_list = tvqa_eval.create_context_vectors(train_sample)
+        ans_list = tvqa_eval.get_answers_from_question(train_sample)
         ## ADD TO DATASET (via upload queue)
-        self.upload_queue.put(caption_embed_dict_list)
-        # print("Added to Queue!")
+        self.upload_queue.put((context_vector_list, ans_list))
+      except FileNotFoundError as e:
+        # this is EXPECTED as some videos are missing somehow.
+        print(e)
+        print(f"WARNING: Could not find video {train_sample['vid_name']}. Skipping...")
       except Exception as e:
-        print("❌❌Error during text-encode: ", e)
+        print("❌❌Error during parallel_TVQA_encode: ", e)
         traceback.print_exc()
         # pprint.pprint(caption_embed_dict_list)
       print(f"⏰ Time to Text-encode file: {(time.monotonic() - start)/60:.2f} minutes."
@@ -160,31 +179,30 @@ def main():
   else:
     # Create output database (none exists yet)
     print(colored(f"👉 Creating output database at {RESULTS_DATASET_PATH}", "cyan", attrs=["reverse", "bold"]))
-    output_ds = dl.Dataset(RESULTS_DATASET_PATH)
+    output_ds = dl.empty(RESULTS_DATASET_PATH, overwrite=True)
     with output_ds:
       # tf_bfloat16 = _pywrap_bfloat16.TF_bfloat16_type() # couldn't get this working weird imports.
-      output_ds.create_tensor("frames_text_embedding", htype="generic", dtype=np.float32, sample_compression=None)
+      output_ds.create_tensor("context_vector", htype="generic", dtype=np.float32, sample_compression=None)
+      output_ds.create_tensor("label", htype="text", dtype=str, sample_compression=None)
       # output_ds.create_tensor("done_text_encode", htype="generic", dtype=bool, sample_compression=None)
-      output_ds.caption_embedding.extend([np.float32(0)] * output_ds.max_len)  # make equal size (fastest way)
-      # output_ds.done_text_encode.extend([False] * output_ds.max_len)  # set all to false (fastest way)
+
+      # NO NEED to prepopulate. We'll just append instead. no need for ordering.
+      # total_samples = 650_000  # train samples * num questions
+      # output_ds.context_vector.extend([np.float32(0)] * total_samples)  # make equal size (fastest way)
       output_ds.flush()
-    with output_ds:
-      print("Prepopulating `caption_embedding` tensor with custom-tokenized np.zeros((custom_token_len, 1024).")
-      print(output_ds.summary())
-      populate_ds_with_zeros().eval(output_ds, scheduler="ray", num_workers=NUM_CPU_CORES, skip_ok=True)
-      print("Output ds after prepopulating")
-      print(output_ds.summary())
     del output_ds  # hopefully this closes connection?
 
   ray.init(num_gpus=NUM_GPUS, num_cpus=NUM_CPU_CORES, include_dashboard=False, ignore_reinit_error=True)
   print_cluster_stats()
 
+  train_filepath = "/mnt/teton/vpt/data/benchmark_datasets/TVQA/TVQA/data/tvqa_qa_release/tvqa_train.jsonl"
+
   # only launch set number of workers, they all pull from the same work queue.
   parallel_encode = ParallelEncode.remote()
   print("Starting upload queue")
-  populate_work_queue_future = parallel_encode.populate_work_queue.remote()
+  populate_work_queue_future = parallel_encode.populate_work_queue.remote(train_filepath)
   print("Starting parallel batches")
-  all_done_futures = [parallel_encode.parallel_text_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)]
+  all_done_futures = [parallel_encode.parallel_tvqa_encode.remote() for _ in range(NUM_PARALLEL_PROCESSES)]
   all_done = ray.get(all_done_futures)
   all_done.append(ray.get(populate_work_queue_future))
 

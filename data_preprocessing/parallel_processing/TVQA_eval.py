@@ -13,12 +13,15 @@ from PIL import Image
 os.environ['TRANSFORMERS_CACHE'] = '/mnt/teton/utils/cache/huggingface'
 os.environ['HF_DATASETS_CACHE'] = '/mnt/teton/utils/cache/datasets'
 
-sys.path.append("../../data_preprocessing/parallel_processing")
+# sys.path.append("../../data_preprocessing/parallel_processing")
 from clip_encoder import ClipEncoder
 from text_encoder import FlanT5Encoder
 
+TVQA_FRAMES_DIR = '/mnt/teton/vpt/data/benchmark_datasets/TVQA/march_28_uncompressed_frames/frames_hq'
+# TVQA_FRAMES_DIR = /mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq -- OLD
 
-class TVQA_eval():
+
+class TVQA_Eval():
 
   def __init__(self):
 
@@ -71,6 +74,16 @@ class TVQA_eval():
     sub = ' '.join([_dict["text"] for _dict in self.subtitles.loc[vid_name]["sub"]])
     return sub.strip()
 
+  def get_answers_from_question(self, qa: Dict) -> List[str]:
+    ''' Go from train example dict, to a list of which answers are correct/wrong.'''
+    answer_list = []
+    for index in range(5):
+      if index == qa['answer_idx']:
+        answer_list.append("yes")
+      else:
+        answer_list.append("no")
+    return answer_list
+
   def qa_to_prompt(self, qa: Dict):
     '''
     TODO: update prompt to be VPT-compatible. 
@@ -105,43 +118,41 @@ class TVQA_eval():
     # pad_size = (1024 - combined_tensor.shape[0], 1024)
     # padded_tensor = torch.nn.functional.pad(combined_tensor, pad_size, value=-100)
 
-    # Reinsert 
-    assert combined_tensor.shape[0] == 1024, f"the combined encoding does not have exactly 1024 embeddings! Dimension: {combined_tensor.shape}"
+    # Reinsert
+    assert combined_tensor.shape[
+        0] == 1024, f"the combined encoding does not have exactly 1024 embeddings! Dimension: {combined_tensor.shape}"
 
     return combined_tensor
 
   def create_context_vectors(self, question):
     '''Combine the two vectors to create the context vector'''
-    try:
-      all_context_vectors = []
-      text_encodings = self.get_flant5_embed_from_vid_name(question)
-      image_encoding = self.get_clip_embed_from_vid_name(question['vid_name'])  # this should be get_clip_embed_from_vid_name
-      for text_encoding in text_encodings:
-        all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
-      return all_context_vectors
-    except FileNotFoundError as e:
-      print(e)
-      print(f"WARNING: Could not find video {question['vid_name']}. Skipping...")
+    all_context_vectors = []
+    # todo, run these at the same time.
+    text_encodings = self.get_flant5_embed_from_vid_name(question)
+    image_encoding = self.get_clip_embed_from_vid_name(question['vid_name'])  # this should be get_clip_embed_from_vid_name
+    for text_encoding in text_encodings:
+      all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
+    return all_context_vectors
 
   def pad_or_truncate_tensor(self, tensor, truncate_shape):
-      target_shape = [truncate_shape, 1024]
-      tensor_shape = tensor.shape
+    target_shape = [truncate_shape, 1024]
+    tensor_shape = tensor.shape
 
-      # If tensor shape is larger than the target shape, truncate the tensor
-      if tensor_shape[0] > target_shape[0]:
-          truncated_tensor = tensor[:target_shape[0], :]
-          return truncated_tensor
+    # If tensor shape is larger than the target shape, truncate the tensor
+    if tensor_shape[0] > target_shape[0]:
+      truncated_tensor = tensor[:target_shape[0], :]
+      return truncated_tensor
 
-      # If tensor shape is smaller than the target shape, pad the tensor
-      elif tensor_shape[0] < target_shape[0]:
-          padding_shape = (target_shape[0] - tensor_shape[0], target_shape[1])
-          padded_tensor = torch.nn.functional.pad(tensor, (0, 0, 0, padding_shape[0]), value=-100)
-          return padded_tensor
+    # If tensor shape is smaller than the target shape, pad the tensor
+    elif tensor_shape[0] < target_shape[0]:
+      padding_shape = (target_shape[0] - tensor_shape[0], target_shape[1])
+      padded_tensor = torch.nn.functional.pad(tensor, (0, 0, 0, padding_shape[0]), value=-100)
+      return padded_tensor
 
-      # If tensor shape is already the target shape, return the tensor
-      else:
-          return tensor
-      
+    # If tensor shape is already the target shape, return the tensor
+    else:
+      return tensor
+
   def vid_name_to_frames_path(self, vid_name):
     '''
     Example:
@@ -160,7 +171,7 @@ class TVQA_eval():
     else:
       show_name_path = self.vid_name_prefix_to_path[show_name]
 
-    frames_dir = os.path.join('/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq', show_name_path, clip_name_path)
+    frames_dir = os.path.join(TVQA_FRAMES_DIR, show_name_path, clip_name_path)
     if not os.path.exists(frames_dir):
       raise FileNotFoundError(f"frames_dir {frames_dir} does not exist")
 
@@ -200,7 +211,6 @@ class TVQA_eval():
     for batch in batch_list:
       clip_embeddings.extend(self.clip_encoder.run_clip(batch, only_return_pooled_embeds=True))
 
-
     # Converting a list of tensors to a tensor
     # Get the shape of the first tensor in the list
     tensor_shape = clip_embeddings[0].shape
@@ -208,7 +218,7 @@ class TVQA_eval():
     tensor = torch.zeros(len(clip_embeddings), *tensor_shape)
     # Fill the tensor with the values from the input list
     for i, t in enumerate(clip_embeddings):
-        tensor[i, ...] = t
+      tensor[i, ...] = t
     fixed_tensor = self.pad_or_truncate_tensor(tensor, max_encodings_to_make)
     fixed_tensor.cpu()
     return fixed_tensor
@@ -254,14 +264,14 @@ class TVQA_eval():
 
 
 def main():
-  eval = TVQA_eval()
+  # eval = TVQA_eval()
 
   # can iterate over all questions in train_qa_json.
   # print('\n'.join(eval.qa_to_prompt(eval.train_qa_json[0])))
   # print(eval.qa_to_prompt(eval.train_qa_json[0]))
 
   # get a baseline using Flan-T5.
-
+  '''
   actual = []
   predicted = []
   for i in range(5):
@@ -272,6 +282,7 @@ def main():
     print("Actual answer:   ", eval.train_qa_json[i]['answer_idx'])
 
   print("Accuracy:", eval.accuracy(actual, predicted))
+  '''
 
 
 if __name__ == '__main__':
