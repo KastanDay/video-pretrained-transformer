@@ -177,23 +177,35 @@ class TVQA_eval():
 
     return frames_dir
 
-  def get_clip_embed_from_vid_name(self, vid_name, start_time, end_time):
+  def get_clip_embed_from_vid_name(self, vid_name, max_encodings_to_make=220):
     '''
     ✅ Working
-    Input: vid_name (from the subtitles jsonl file)
-    Output: A list of clip embeddings for that video segment. There is a VARIABLE number of frames per "clip". 
+    
+    PARAMS
+    vid_name (from the subtitles jsonl file)
+    max_encodings_to_make: int. It will only encode the FIRST max_encodings_to_make frames.
+    
+    RETURNS
+    A list of clip embeddings for that video segment. There is a VARIABLE number of frames per "clip". 
+    
+    Notes: 
       * Castle avg frames/clip = 274.79
       * BBT avg frames/clip    = 186.38
+    
+    220 frames per clip is a good number to use.
+    1024 (Flan-T5-XXL window size) - 220 = 804 text encodings to use. 
     '''
     # collect all frames from filepath
     segment_frames_paths = pathlib.Path(self.vid_name_to_frames_path(vid_name)).glob('*.jpg')
     frames_PIL_list = []
     for path in segment_frames_paths:
+      if len(frames_PIL_list) >= max_encodings_to_make:
+        break
       with Image.open(path) as img:
         frames_PIL_list.append(np.array(img))
 
     # split frames_PIL_list into batches of 100 (to avoid OOM)
-    batch_list = list(more_itertools.batched(frames_PIL_list, 100))
+    batch_list = list(more_itertools.batched(frames_PIL_list, 110))
 
     clip_embeddings = []
     for batch in batch_list:
