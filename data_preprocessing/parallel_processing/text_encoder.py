@@ -27,7 +27,7 @@ model_name = "google/flan-t5-large"
 class FlanT5Encoder:
 
   def __init__(self, device: str = "cuda:1"):
-    self.device = torch.device('cuda:1') if torch.cuda.is_available() else "cpu"
+    self.device = torch.device('cuda:1')  # if torch.cuda.is_available() else "cpu"
     print("In FlanT5Encoder, using:", self.device)
     self.tokenizer = T5Tokenizer.from_pretrained(model_name)
     self.model = T5EncoderModel.from_pretrained(model_name, torch_dtype=chosen_datatype).to(self.device)
@@ -89,18 +89,43 @@ class FlanT5Encoder:
       else:
         return tensor
 
-    # Tokenize the sentence and convert it to a PyTorch tensor
-    tokens = self.tokenizer(sentence, return_tensors="pt", padding=False, truncation=False).to(self.device)
+    try:
+      # Tokenize the sentence and convert it to a PyTorch tensor
+      tokens = self.tokenizer(sentence, return_tensors="pt", padding=True, truncation=True).to(self.device)
 
-    # Generate the last hidden layer of the CLIP encoder
-    lhs = self.model(**tokens).last_hidden_state
+      # Generate the last hidden layer of the CLIP encoder
+      with torch.inference_mode():
+        lhs = self.model(**tokens).last_hidden_state
 
-    # Truncate or pad last hidden states
-    truncated_states = pad_or_truncate_tensor(lhs.squeeze(0))
-    truncated_states = truncated_states.cpu()
-    new_tensor = truncated_states
-    if model_name == "google/flan-t5-small":
-      new_tensor = torch.full((truncated_states.shape[0], 1024), -100)
-      # Copy the original tensor's values to the first 512 columns of the new tensor
-      new_tensor[:, :512] = truncated_states
-    return new_tensor
+      # Truncate or pad last hidden states
+      truncated_states = pad_or_truncate_tensor(lhs.squeeze(0))
+      truncated_states = truncated_states.cpu()
+      new_tensor = truncated_states
+      if model_name == "google/flan-t5-small":
+        new_tensor = torch.full((truncated_states.shape[0], 1024), -100)
+        # Copy the original tensor's values to the first 512 columns of the new tensor
+        new_tensor[:, :512] = truncated_states
+
+      # print("------------------- ✅ SUCCESSFUL TEXT ENCODE (below here) -----------------------------")
+      # print()
+      # print("Sentence: ", sentence)
+      # print()
+      # tokens = self.tokenizer(sentence, return_tensors="pt", padding=False, truncation=False).input_ids
+      # print("Tokens: ", tokens.shape)
+      # print()
+      # print("-------------------------------------------------------------------------------------")
+      # torch.cuda.empty_cache()
+      # print(torch.cuda.memory_stats())
+
+      return new_tensor
+    except Exception as e:
+      print("------------------- ❌ FAILED TEXT ENCODE (below here) -----------------------------")
+      print()
+      print("Sentence: ", sentence)
+      print()
+      tokens = self.tokenizer(sentence, return_tensors="pt", padding=False, truncation=False).input_ids
+      print("Tokens: ", tokens.shape)
+      print()
+      print("-------------------------------------------------------------------------------------")
+      torch.cuda.empty_cache()
+      # print(torch.cuda.memory_stats())

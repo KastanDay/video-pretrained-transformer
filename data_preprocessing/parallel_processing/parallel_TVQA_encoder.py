@@ -54,7 +54,7 @@ GLOBAL_TOKENIZER = T5Tokenizer.from_pretrained("google/flan-t5-xxl")
 BATCH_NAME = 'tvqa_whole'
 RESULTS_DATASET_PATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/mar_28_TVQA_encode_{BATCH_NAME}'
 
-NUM_GPUS = 1
+NUM_GPUS = 2
 NUM_PARALLEL_PROCESSES = 1  # 16 works on 4090, but util is average 5%.
 NUM_CPU_CORES = psutil.cpu_count()
 BATCH_SIZE = 512
@@ -63,7 +63,7 @@ BATCH_SIZE = 512
 
 
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
-@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=0, num_gpus=NUM_GPUS)
+@ray.remote(concurrency_groups={"parallel_whisper_instances": NUM_PARALLEL_PROCESSES}, num_cpus=0, num_gpus=2)  # 2 gpu for CLIP + text
 class ParallelEncode:
   """
   Parallel actor. Degree of Parallelism = NUM_PARALLEL_PROCESSES
