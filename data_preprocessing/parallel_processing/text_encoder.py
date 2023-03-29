@@ -62,11 +62,33 @@ class FlanT5Encoder:
     return last_hidden_states_batch
   
 
-  def encode_tvqa(self, sentence):
+  def encode_tvqa(self, sentence, truncate_shape = 804):
+      
+      def pad_or_truncate_tensor(tensor):
+          target_shape = [804, truncate_shape]
+          tensor_shape = tensor.shape
+
+          # If tensor shape is larger than the target shape, truncate the tensor
+          if tensor_shape[0] > target_shape[0]:
+              truncated_tensor = tensor[:target_shape[0], :]
+              return truncated_tensor
+
+          # If tensor shape is smaller than the target shape, pad the tensor
+          elif tensor_shape[0] < target_shape[0]:
+              padding_shape = (target_shape[0] - tensor_shape[0], target_shape[1])
+              padded_tensor = torch.nn.functional.pad(tensor, (0, 0, 0, padding_shape[0]), value=-100)
+              return padded_tensor
+
+          # If tensor shape is already the target shape, return the tensor
+          else:
+              return tensor
+        
       # Tokenize the sentence and convert it to a PyTorch tensor
       tokens = self.tokenizer(sentence, return_tensors="pt", padding=False, truncation=False).to(self.device)
 
       # Generate the last hidden layer of the CLIP encoder
       lhs = self.model(**tokens).last_hidden_state
 
-      return lhs.squeeze(0)
+      # Truncate or pad last hidden states
+      truncated_states = pad_or_truncate_tensor(lhs.squeeze(0))
+      return truncated_states

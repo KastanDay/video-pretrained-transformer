@@ -110,8 +110,8 @@ class TVQA_eval():
   def create_context_vectors(self, question):
     '''Combine the two vectors to create the context vector'''
     all_context_vectors = []
-    text_encodings = self.get_flant5_embed_from_vid_name(question['vid_name'])
-    image_encoding = self.vid_name_to_frames_path(question)
+    text_encodings = self.get_flant5_embed_from_vid_name(question)
+    image_encoding = self.vid_name_to_frames_path(question['vid_name'])
     for text_encoding in text_encodings:
       all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
     return all_context_vectors
@@ -191,10 +191,10 @@ class TVQA_eval():
       clip_embeddings.extend(self.clip_encoder.run_clip(batch, only_return_pooled_embeds=True))
     return clip_embeddings
 
-  def get_flant5_embed_from_vid_name(self, question_sample):
+  def get_flant5_embed_from_vid_name(self, question_sample, max_encodings_to_make=804):
     '''
     param: 
-    dictionary with ['a0',  'a1',  'a2',  'a3', 'a4',    'answer_idx',   'q',   'qid',  'show_name', 'ts', 'vid_name'] as keys
+    question_sample is a dictionary with ['a0',  'a1',  'a2',  'a3', 'a4',    'answer_idx',   'q',   'qid',  'show_name', 'ts', 'vid_name'] as keys
 
     returns: list of last hidden state of encoding, (prompt, subtitles, answer) for each answer
     '''
@@ -202,7 +202,7 @@ class TVQA_eval():
     all_prompts = self.qa_to_prompt(question_sample)
     all_encodings = []
     for prompt in all_prompts:
-      all_encodings.append(self.text_encoder.encode_tvqa(prompt, 824))
+      all_encodings.append(self.text_encoder.encode_tvqa(prompt,truncate_shape = max_encodings_to_make))
     return all_encodings
 
   def run_prompts_get_best_answer(self, prompts: List[str]):
