@@ -110,12 +110,17 @@ class TVQA_eval():
 
   def create_context_vectors(self, question):
     '''Combine the two vectors to create the context vector'''
-    all_context_vectors = []
-    text_encodings = self.get_flant5_embed_from_vid_name(question)
-    image_encoding = self.vid_name_to_frames_path(question)
-    for text_encoding in text_encodings:
-      all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
-    return all_context_vectors
+    try:
+      all_context_vectors = []
+      text_encodings = self.get_flant5_embed_from_vid_name(question)
+      image_encoding = self.vid_name_to_frames_path(question['vid_name'])  # this should be get_clip_embed_from_vid_name
+      for text_encoding in text_encodings:
+        all_context_vectors.append(self.combine_modality_encodings(text_encoding, image_encoding))
+      return all_context_vectors
+    except FileNotFoundError as e:
+      print(e)
+      print(f"WARNING: Could not find video {question['vid_name']}. Skipping...")
+
     # OBSOLETE ... migrating to static encodings
     # assert image_encoding < 1024, f"The given image encoding has more than 1024 embeddings! Number of embeddings: {image_encoding}"
     # Handle possible overflows
@@ -153,7 +158,8 @@ class TVQA_eval():
       show_name_path = self.vid_name_prefix_to_path[show_name]
 
     frames_dir = os.path.join('/mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq', show_name_path, clip_name_path)
-    assert os.path.exists(frames_dir), f"frames_dir {frames_dir} does not exist"
+    if not os.path.exists(frames_dir):
+      raise FileNotFoundError(f"frames_dir {frames_dir} does not exist")
 
     return frames_dir
 

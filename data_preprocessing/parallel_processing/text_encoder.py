@@ -1,5 +1,6 @@
 import os
 import pprint
+from enum import Enum
 
 import accelerate
 import lovely_tensors as lt
@@ -16,14 +17,23 @@ logging.set_verbosity_error()
 # TODO: Set max_restarts and max_task_retries to enable retry when the task crashes due to OOM.
 os.environ["RAY_memory_monitor_refresh_ms"] = "0"  # prevents ray from killing the process when it runs out of memory
 
+# use enums?
+# class torch_datatype(Enum):
+#   fp16 = torch.float16
+#   fp32 = torch.float32
+
+# chosen_datatype = torch.float16
+chosen_datatype = torch.float32
+model_name = "google/flan-t5-small"
+
 
 class FlanT5Encoder:
 
-  def __init__(self, device: str = "cpu"):
+  def __init__(self, device: str = "cuda:1"):
     self.device = device if torch.cuda.is_available() else "cpu"
     print("In FlanT5Encoder", self.device)
-    self.tokenizer = T5Tokenizer.from_pretrained("google/flan-t5-large")
-    self.model = T5EncoderModel.from_pretrained("google/flan-t5-large", torch_dtype=torch.float16).to(self.device)
+    self.tokenizer = T5Tokenizer.from_pretrained(model_name)
+    self.model = T5EncoderModel.from_pretrained(model_name, torch_dtype=chosen_datatype).to(self.device)
     # self.model = T5EncoderModel.from_pretrained(
     #     "google/flan-t5-large",
     #     # set device_map to only cuda:0
