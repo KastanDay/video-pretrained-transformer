@@ -126,11 +126,11 @@ class ClipEncoder:
       # print(last_hidden_states.shape)
 
     if only_return_pooled_embeds:
-      all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()
+      all_pooled_clip_embeds = outputs['pooler_output'].cpu()  #.numpy()
       return all_pooled_clip_embeds
     else:
-      all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()  # (batch_size, hidden_size). FloatTensor
-      last_hidden_states = outputs['last_hidden_state'].cpu().numpy()  # (batch_size, sequence_length, hidden_size). FloatTensor
+      all_pooled_clip_embeds = outputs['pooler_output'].cpu()  #.numpy()  # (batch_size, hidden_size). FloatTensor
+      last_hidden_states = outputs['last_hidden_state'].cpu()  #.numpy()  # (batch_size, sequence_length, hidden_size). FloatTensor
       return all_pooled_clip_embeds, last_hidden_states
 
 
