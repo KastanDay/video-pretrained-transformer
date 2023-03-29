@@ -39,13 +39,13 @@ class FlanT5Encoder:
 
   def encode(self, input_dict):  #batch):
     """
-        OLD param batch: list of {'db_index': int, 'caption': str}
-        param input_dict: dict of {'db_index': int, 'caption': str}. batch_size is 1
-        return: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
+    OLD param batch: list of {'db_index': int, 'caption': str}
+    param input_dict: dict of {'db_index': int, 'caption': str}. batch_size is 1
+    return: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
 
-        Important to pad to "max_length" so we can stack the inputs.
-        keeping truncation=False for now because we really don't expect to go over length (with 15-word sequences), and I want to see errors if we do.
-        """
+    Important to pad to "max_length" so we can stack the inputs.
+    keeping truncation=False for now because we really don't expect to go over length (with 15-word sequences), and I want to see errors if we do.
+    """
     last_hidden_states_batch = []
     # for input_dict in batch:
     with torch.inference_mode():
@@ -60,13 +60,12 @@ class FlanT5Encoder:
       last_hidden_states_batch.append({'last_hidden_states': lhs, 'db_index': input_dict['db_index']})
     # return: list of np.arrays, each of different shape [NUM_TOKENS, 1024]
     return last_hidden_states_batch
-  
 
-  def encode_tvqa(self, sentence):
-      # Tokenize the sentence and convert it to a PyTorch tensor
-      tokens = self.tokenizer(sentence, return_tensors="pt", padding=False, truncation=False).to(self.device)
+  def encode_tvqa(self, sentence, max_tokens=804):
+    # Tokenize the sentence and convert it to a PyTorch tensor
+    tokens = self.tokenizer(sentence, return_tensors="pt", padding=False, truncation=False).to(self.device)
 
-      # Generate the last hidden layer of the CLIP encoder
-      lhs = self.model(**tokens).last_hidden_state
+    # Generate the last hidden layer of the CLIP encoder
+    lhs = self.model(**tokens).last_hidden_state
 
-      return lhs.squeeze(0)
+    return lhs.squeeze(0)
