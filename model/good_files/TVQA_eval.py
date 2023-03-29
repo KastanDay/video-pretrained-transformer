@@ -2,7 +2,7 @@ import json
 import os
 import pathlib
 import sys
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import more_itertools
 import numpy as np
@@ -79,6 +79,8 @@ class TVQA_eval():
     # In this version, we only get the subtitles relevant to the time stamp
     # subtitle = self.get_subtitle_from_clip(qa['vid_name'], float(qa['ts'].split('-')[0]), float(qa['ts'].split('-')[-1]))
     # In this version, we get all subtitles from the video
+    print(qa)
+    print(qa['vid_name'])
     subtitle = self.get_all_subtitles(qa['vid_name'])
 
     # Should change this to all frames. Either way, this is irrelevant for this function
@@ -88,7 +90,6 @@ class TVQA_eval():
         f"Context: {subtitle}. Question: {qa['q']} Is it '{ans_candidate}'?"
         for ans_candidate in [qa['a0'], qa['a1'], qa['a2'], qa['a3'], qa['a4']]
     ]
-
 
   def combine_modality_encodings(self, text_encoding, image_encoding):
     '''Untested btw'''
@@ -198,6 +199,7 @@ class TVQA_eval():
 
     returns: list of last hidden state of encoding, (prompt, subtitles, answer) for each answer
     '''
+    assert type(question_sample) == dict, f"question_sample must be a dictionary. It is a {type(question_sample)}."
 
     all_prompts = self.qa_to_prompt(question_sample)
     all_encodings = []
