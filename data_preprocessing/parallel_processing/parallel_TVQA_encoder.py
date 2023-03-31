@@ -125,6 +125,8 @@ class ParallelEncode:
 
       try:
         # RUN MAIN MODELS
+        if train_sample['show_name'] == 'The Big Bang Theory':
+          continue
         context_vector_list = tvqa_eval.create_context_vectors(train_sample)
         ans_list = tvqa_eval.get_answers_from_question(train_sample)
         ## ADD TO DATASET (via upload queue)

@@ -6,15 +6,15 @@ import time
 from typing import List
 
 import accelerate
-import cv2
+# import cv2
 import lovely_tensors as lt
 import numpy as np
 import PIL
 import torch
-from decord import (  # best random-access video reader all the lands.
-    VideoReader, cpu)
+# from decord import (  # best random-access video reader all the lands.
+    # VideoReader, cpu)
 from PIL import Image
-from termcolor import colored
+# from termcolor import colored
 from transformers import CLIPProcessor, CLIPVisionModel, logging
 
 lt.monkey_patch()

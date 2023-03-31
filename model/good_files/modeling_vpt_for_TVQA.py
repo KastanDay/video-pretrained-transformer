@@ -29,11 +29,11 @@ class VPT_model(ComposerModel):
     # self.model.train()  -- already done by compser I think.
 
     # I got this vocab size from outputs.logits (it's rounded up from tokenizer.vocab_size)
-    self.train_cross_entropy = LanguageCrossEntropy(vocab_size=32128, ignore_index=-100)
+    # self.train_cross_entropy = LanguageCrossEntropy(vocab_size=32128, ignore_index=-100)
     self.val_cross_entropy = LanguageCrossEntropy(vocab_size=32128, ignore_index=-100)
+    self.yes_token_index = 4273
+    self.no_token_index = 150
 
-    self.no_token_index = self.t5_tokenizer.convert_tokens_to_ids('no')  # 150
-    self.yes_token_index = self.t5_tokenizer.convert_tokens_to_ids('yes')  # 4273
 
   def forward(self, batch):
     # dim=1 means concat along sequence dimension
@@ -52,9 +52,14 @@ class VPT_model(ComposerModel):
     If we set batch size to 5, then we can do 1 question per batch. 
     Makes it easier to report validation results.
     '''
+    yes_no_label = batch['label']
 
     num_new_tokens = 1  # only output 1 token, hopefully yes or no.
 
+    # input_embeds_arr = torch.cat([batch['clip_pooled_embedding'], batch['clip_last_hidden_states'], batch['caption_embedding']],
+                                #  dim=1)  # concat along sequence dimension
+
+    input_embeds_arr = batch["context_vector"]
     self.model.eval()
     with torch.no_grad():
       outputs = self.model.forward(inputs_embeds=batch['context_vector'],
@@ -72,6 +77,9 @@ class VPT_model(ComposerModel):
       raise ValueError("yes_no_label must be 'yes' or 'no'")
 
     self.update_metric(outputs=outputs, ground_truth_onehot=ground_truth, metric=self.val_cross_entropy)
+    self.val_cross_entropy.update(outputs, ground_truth)
+
+    # print("Cross entropy: ", self.val_cross_entropy.compute())
     wandb.log({"val_loss_cross_entropy": self.val_cross_entropy.compute()})
 
     return outputs
