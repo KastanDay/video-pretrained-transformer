@@ -32,9 +32,11 @@ class VPT_model(ComposerModel):
     self.val_cross_entropy = LanguageCrossEntropy(vocab_size=32128, ignore_index=-100)
 
   def forward(self, batch):
-    input_embeds_arr = torch.cat([batch['clip_pooled_embedding'], batch['clip_last_hidden_states'], batch['caption_embedding']],
-                                 dim=1)  # concat along sequence dimension
-    return self.model.forward(inputs_embeds=input_embeds_arr, attention_mask=batch['attn_mask_arr'], labels=batch['labels'])
+    # dim=1 means concat along sequence dimension
+    # input_embeds_arr = torch.cat([batch['context_vector'], batch['clip_last_hidden_states'], batch['caption_embedding']], dim=1)  
+    
+    # todo: make attention mask array where tensors are -100. 
+    return self.model.forward(inputs_embeds=batch['context_vector'], attention_mask=batch['attn_mask_arr'], labels=batch['labels'])
 
   def eval_forward(self, batch, outputs=None):
     '''
@@ -47,7 +49,7 @@ class VPT_model(ComposerModel):
     Makes it easier to report validation results.
     '''
     ground_truth_labels = batch['labels'][0][batch['labels'][0] != -100]
-    num_new_tokens = ground_truth_labels.shape[0]
+    num_new_tokens = .shape[0]
 
     input_embeds_arr = torch.cat([batch['clip_pooled_embedding'], batch['clip_last_hidden_states'], batch['caption_embedding']],
                                  dim=1)  # concat along sequence dimension
@@ -92,105 +94,3 @@ class VPT_model(ComposerModel):
   # def metrics(self, train: bool = False):
   #     return self.train_cross_entropy if train else self.val_cross_entropy
   # MetricCollection([self.val_acc, self.val_loss]) <-- for multiple metrics
-
-  def vpt_transform_dataset_to_batch(self, segment_batch):
-    '''
-    param: segment_batch: IterableOrderedDict. 1 SEGMENT (not batch_size, just one).
-    The dataloader controls batch size, this just returns a single batch.
-    
-    caption embedding: keep only the first HALF of caption embedding. 
-    label:             only keep 2nd half of caption to use as labels.
-    clip_last_hidden_states: All clip hidden states.
-    clip_pooled_embedding: 
-    
-    
-
-    returns: batch dictionary.  Keys: input_embeds_arr, attn_mask_arr, labels_tokenized
-                                Values: batched Torch Tensors of shape <1, 1024, 1024>. These are stacked to create a batch.
-    '''
-    # todo: remove all mention of cuda from this functino (no .todevice), then use pin=True.
-    # device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    # print("👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉 SEGMENT BATCH", flush=True)
-    batch = {}  # keys: input_embeds_arr, attn_mask_arr, labels
-
-    tokenizer = AutoTokenizer.from_pretrained(self.huggingface_model_name, return_special_tokens_mask=True)
-
-    # maybe don't loop here??? just do it once. Not sure how it works on ds.batch_size setting.
-    # Loop over BATCH_SIZE. Create dictionary where key = name, value = batched tensor
-    for key, numpy_array in zip(segment_batch.keys(), segment_batch):
-      # print("------------- PRINTING SEGMENT --------- ")
-      if key == 'clip_pooled_embedding':
-        # print("⭐️1️⃣ pooled embedding")
-        numpy_array = numpy_array.reshape(1, -1)  # for batch size purposes.
-        if key in batch.keys():
-          batch[key] = torch.cat((batch[key], torch.from_numpy(numpy_array)), dim=0)
-        else:
-          batch[key] = torch.from_numpy(numpy_array)
-
-      elif key == 'caption_embedding':
-        # print("⭐️2️⃣ caption embedding")
-        # keep only the first HALF of caption embedding.
-        caption_length = numpy_array.shape[0]
-        s_half = caption_length // 2
-        # constant length of 446, pad with zeros. 446 is the max length of a caption (1024 - 577 - 1).
-        caption_embedding_full_length = torch.zeros((446, 1024))
-        caption_embedding_full_length[0:s_half] = torch.from_numpy(numpy_array[0:s_half])
-
-        # setup attention mask now that we know full length of caption
-        att_mask_shape = [1024]
-        attn_mask_arr = torch.zeros(att_mask_shape)
-        attn_mask_arr[0:578 + s_half] = 1
-
-        if key in batch.keys():
-          # batch[key] = torch.cat((batch[key], torch.ones(10)), dim=0) # todo BAD for testing
-          batch[key] = torch.cat((batch[key], caption_embedding_full_length), dim=0)
-          batch['attn_mask_arr'] = torch.cat((batch['attn_mask_arr'], attn_mask_arr), dim=0)
-        else:
-          # batch[key] = torch.ones(10)  # todo BAD for testing
-          batch[key] = caption_embedding_full_length
-          batch['attn_mask_arr'] = attn_mask_arr
-
-      elif key == 'clip_last_hidden_states':
-        # print("⭐️3️⃣ clip last hidden states")
-        if key in batch.keys():
-          batch[key] = torch.cat((batch[key], torch.from_numpy(numpy_array)), dim=0)
-        else:
-          batch[key] = torch.from_numpy(numpy_array)
-
-      # todo; clean this up IDK what exactly the labels look like.
-      elif key == 'caption':
-        caption = numpy_array[0]  # passed in as a single-element list.
-        # print("⭐️4️⃣ CAPTION")
-        # print(caption)
-        full_caption_tokenized = tokenizer(caption, padding=False, truncation=True, return_tensors="pt").input_ids
-        caption_length = full_caption_tokenized.shape[1]
-        s_half = caption_length // 2
-        # only keep 2nd half of caption to use as labels.
-        proper_shape = full_caption_tokenized[0][s_half:].shape[0]
-        labels_full_length = torch.ones((512), dtype=torch.int64) * -100
-        labels_full_length[:proper_shape] = full_caption_tokenized[0][s_half:]  # 👈 take 2nd half!!
-        if 'labels' in batch.keys():
-          batch['labels'] = torch.cat((batch['labels'], labels_full_length), dim=0)
-        else:
-          batch['labels'] = labels_full_length
-    return batch
-
-
-'''
-def log_gradient_norm():
-# practitioners recommend logging the average norm of the grad. 
-  try:
-    # start_time = time.monotonic()
-    total_norm = 0
-    # todo: make member function
-    parameters = [p for p in t5.parameters() if p.grad is not None and p.requires_grad]
-    for p in parameters:
-      param_norm = p.grad.detach().data.norm(2)
-      total_norm += param_norm.item()**2
-    total_norm = total_norm**0.5
-    wandb.log({"total_gradient_norm": total_norm})
-    # print(f"Time to log norm: {(time.monotonic() - start_time):2f} seconds") # 0.01 seconds
-    return total_norm
-  except Exception as e:
-    print("Failed to log gradient norm: ", e)
-'''
