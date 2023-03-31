@@ -28,16 +28,9 @@ class VPT_model(ComposerModel):
     # self.model.train()  -- already done by compser I think.
 
     # I got this vocab size from outputs.logits (it's rounded up from tokenizer.vocab_size)
-<<<<<<< HEAD
-    # self.train_cross_entropy = LanguageCrossEntropy(vocab_size=32128, ignore_index=-100)
-    self.val_cross_entropy = LanguageCrossEntropy(vocab_size=32128, ignore_index=-100)
-    self.yes_token_index = 4273
-    self.no_token_index = 150
-=======
     self.vocab_size = 32128
     self.train_cross_entropy = LanguageCrossEntropy(self.vocab_size, ignore_index=-100)
     self.val_cross_entropy = LanguageCrossEntropy(self.vocab_size, ignore_index=-100)
->>>>>>> fa5a632d7dfaf0cb1621dbb105ef3449dc230088
 
 
   def forward(self, batch):
