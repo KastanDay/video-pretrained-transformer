@@ -54,7 +54,7 @@ def main():
   if '103ai' in hostname:
     print("Hostname: 103ai, EPYC")
     # BASE_DIR = '/mnt/teton/vpt/data/deeplake_parallel_15'
-    BASE_DIR = '/mnt/teton/vpt/data/deeplake_handpicked'
+    BASE_DIR = '/mnt/teton/vpt/'
   elif "gpu" in hostname or "gpu" in hostname:
     print("Hostname: Delta GPU")
     BASE_DIR = '/scratch/bbki/kastanday/whisper'
@@ -65,22 +65,24 @@ def main():
     print("Hostname: HAL")
     BASE_DIR = '~/thesis/VPT_data'
 
+  train()
+
 
 def train():
 
   #PARAMS
+  batch_name = 'tvqa_whole'
+  DATABASE_FILEPATH = f'/mnt/teton/vpt/data/benchmark_datasets/TVQA/_deeplake/mar_28_TVQA_encode_{batch_name}'
+  model_save_path = f'{BASE_DIR}/data/benchmark_datasets/TVQA/CHECKPOINTS'
+
+  model_version_name = 'first_attempt'
+  model_huggingface_name = "google/flan-t5-large"
+
   batch_size = 1
-  learning_rate = 1e-4
-  database_filepath = tbd
-  model_save_path = tbd
-  model_version_name = tbd
-  cosine_warmup_batches = tbd
-  batch_name = tbd
-  model_huggingface_name = tbd
+  learning_rate = 1e-3
+  cosine_warmup_batches = 10_000  # from sweep
 
-  DATABASE_FILEPATH = tbd
-
-  model = VPT_model(model_huggingface_name=model_huggingface_name, model_version_name=model_version_name)
+  model = VPT_model(model_huggingface_name=model_huggingface_name,)
 
   # create dataloader
   ds = dl.load(DATABASE_FILEPATH)
@@ -102,7 +104,7 @@ def train():
           "config": {
               'learning_rate': learning_rate,
               'batch_name': batch_name,
-              'dataset_path': database_filepath,
+              'dataset_path': DATABASE_FILEPATH,
               'model_save_path': model_save_path,
           },
           "entity": "kastan",
