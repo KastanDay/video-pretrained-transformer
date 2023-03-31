@@ -33,9 +33,9 @@ class VPT_model(ComposerModel):
 
   def forward(self, batch):
     # dim=1 means concat along sequence dimension
-    # input_embeds_arr = torch.cat([batch['context_vector'], batch['clip_last_hidden_states'], batch['caption_embedding']], dim=1)  
-    
-    # todo: make attention mask array where tensors are -100. 
+    # input_embeds_arr = torch.cat([batch['context_vector'], batch['clip_last_hidden_states'], batch['caption_embedding']], dim=1)
+
+    # todo: make attention mask array where tensors are -100.
     return self.model.forward(inputs_embeds=batch['context_vector'], attention_mask=batch['attn_mask_arr'], labels=batch['labels'])
 
   def eval_forward(self, batch, outputs=None):
@@ -48,8 +48,9 @@ class VPT_model(ComposerModel):
     If we set batch size to 5, then we can do 1 question per batch. 
     Makes it easier to report validation results.
     '''
-    ground_truth_labels = batch['labels'][0][batch['labels'][0] != -100]
-    num_new_tokens = .shape[0]
+    yes_no_label = batch['labels']
+
+    num_new_tokens = 1  # only output 1 token, hopefully yes or no.
 
     input_embeds_arr = torch.cat([batch['clip_pooled_embedding'], batch['clip_last_hidden_states'], batch['caption_embedding']],
                                  dim=1)  # concat along sequence dimension
@@ -64,7 +65,16 @@ class VPT_model(ComposerModel):
     # generated vs actual tokens.
     # todo: just pass logits and labels, no edits at all. Works cuz I already set Ignore index = -100, so they match.
     # self.val_cross_entropy.update(outputs.logits, batch['labels']) # this should work, is simpler, but untested
-    self.val_cross_entropy.update(outputs.logits[0][0:num_new_tokens], batch['labels'][0][0:num_new_tokens])
+    ground_truth = torch.zeros_like(batch['context_vector'])
+    if yes_no_label == 'yes':
+      # ground_truth[]
+      ground_truth[self.yes_token_index] = 1
+    elif yes_no_label == 'no':
+      ground_truth[self.no_token_index] = 1
+    else:
+      raise ValueError("yes_no_label must be 'yes' or 'no'")
+
+    self.val_cross_entropy.update(outputs, batch)
 
     # print("Cross entropy: ", self.val_cross_entropy.compute())
     wandb.log({"val_loss_cross_entropy": self.val_cross_entropy.compute()})
