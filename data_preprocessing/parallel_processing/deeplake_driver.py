@@ -193,10 +193,6 @@ class DeeplakeManager():
           start = time.monotonic()
           (context_vector_list, answer_list) = self.upload_queue.get(block=True, timeout=120)
 
-          print("BEFORE UPLOAD")
-          print("context_vector_list", context_vector_list)
-          print("answer_list", answer_list)
-
           for context_vector, answer in zip(context_vector_list, answer_list):
             self.ds.context_vector.append(context_vector.numpy())
             self.ds.label.append(answer)
