@@ -32,8 +32,6 @@ class VPT_model(ComposerModel):
     self.train_cross_entropy = LanguageCrossEntropy(self.vocab_size, ignore_index=-100)
     self.val_cross_entropy = LanguageCrossEntropy(self.vocab_size, ignore_index=-100)
 
-    self.no_token_index = self.t5_tokenizer.convert_tokens_to_ids('no')  # 150
-    self.yes_token_index = self.t5_tokenizer.convert_tokens_to_ids('yes')  # 4273
 
   def forward(self, batch):
     # dim=1 means concat along sequence dimension
@@ -55,10 +53,15 @@ class VPT_model(ComposerModel):
     '''
     Docs: https://docs.mosaicml.com/en/v0.11.1/api_reference/generated/composer.ComposerModel.html#composer.ComposerModel.eval_forward
     '''
+    yes_no_label = batch['label']
 
     # todo can we set num_new_tokens in forward()? No right?? Maybe.
     num_new_tokens = 1  # only output 1 token, hopefully yes or no.
 
+    # input_embeds_arr = torch.cat([batch['clip_pooled_embedding'], batch['clip_last_hidden_states'], batch['caption_embedding']],
+                                #  dim=1)  # concat along sequence dimension
+
+    input_embeds_arr = batch["context_vector"]
     self.model.eval()
     l = batch['label'].reshape(1, 2)
 

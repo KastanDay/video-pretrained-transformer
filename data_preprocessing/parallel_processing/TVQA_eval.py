@@ -164,14 +164,14 @@ class TVQA_Eval():
     returns: /mnt/teton/vpt/data/benchmark_datasets/TVQA/uncompressed_frames/frames_hq/house_frames/s02e05_seg02_clip_11
     '''
 
-    show_name, clip_name_path = vid_name.split('_', 1)[0], vid_name.split('_', 1)[1]
+    show_name, _ = vid_name.split('_', 1)[0], vid_name.split('_', 1)[1]
     if show_name not in self.vid_name_prefix_to_path:
       show_name_path = 'bbt_frames'
-      clip_name_path = vid_name  # no prefix at all used for bbt. vid_name is actually the 'clip_name_path'
+      # clip_name_path = vid_name  # no prefix at all used for bbt. vid_name is actually the 'clip_name_path'
     else:
       show_name_path = self.vid_name_prefix_to_path[show_name]
 
-    frames_dir = os.path.join(TVQA_FRAMES_DIR, show_name_path, clip_name_path)
+    frames_dir = os.path.join(TVQA_FRAMES_DIR, show_name_path, vid_name)
     if not os.path.exists(frames_dir):
       raise FileNotFoundError(f"frames_dir {frames_dir} does not exist")
 
