@@ -6,15 +6,15 @@ import time
 from typing import List
 
 import accelerate
-import cv2
+# import cv2
 import lovely_tensors as lt
 import numpy as np
 import PIL
 import torch
-from decord import (  # best random-access video reader all the lands.
-    VideoReader, cpu)
+# from decord import (  # best random-access video reader all the lands.
+    # VideoReader, cpu)
 from PIL import Image
-from termcolor import colored
+# from termcolor import colored
 from transformers import CLIPProcessor, CLIPVisionModel, logging
 
 lt.monkey_patch()
@@ -126,11 +126,11 @@ class ClipEncoder:
       # print(last_hidden_states.shape)
 
     if only_return_pooled_embeds:
-      all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()
+      all_pooled_clip_embeds = outputs['pooler_output'].cpu()  #.numpy()
       return all_pooled_clip_embeds
     else:
-      all_pooled_clip_embeds = outputs['pooler_output'].cpu().numpy()  # (batch_size, hidden_size). FloatTensor
-      last_hidden_states = outputs['last_hidden_state'].cpu().numpy()  # (batch_size, sequence_length, hidden_size). FloatTensor
+      all_pooled_clip_embeds = outputs['pooler_output'].cpu()  #.numpy()  # (batch_size, hidden_size). FloatTensor
+      last_hidden_states = outputs['last_hidden_state'].cpu()  #.numpy()  # (batch_size, sequence_length, hidden_size). FloatTensor
       return all_pooled_clip_embeds, last_hidden_states
 
 

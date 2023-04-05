@@ -25,7 +25,8 @@ from termcolor import colored
 class DeeplakeManager():
 
   def __init__(self, preprocessor_type=None, database_path=None, upload_queue=None):
-    assert preprocessor_type in ['whisper', 'clip', 'text-encode'], "only these modes are supported due to custom upload function for each."
+    assert preprocessor_type in ['whisper', 'clip', 'text-encode',
+                                 'tvqa-encode'], "only these modes are supported due to custom upload function for each."
 
     ray.init('auto', ignore_reinit_error=True)  # todo: connect to existing ray cluster...
 
@@ -48,8 +49,6 @@ class DeeplakeManager():
     The __init__() calls this function to upload data to Deeplake database. Upload is done in background.
     '''
     print("Started the forever upload driver...")
-    assert preprocessor_type in ['whisper', 'clip',
-                                 'text-encode'], "only these modes are supported. Due to custom upload function for each."
     if preprocessor_type == 'whisper':
       while True:  # continuously check upload queue
         self._whisper_results_to_deeplake()
@@ -61,6 +60,10 @@ class DeeplakeManager():
     elif preprocessor_type == 'text-encode':
       while True:  # continuously check upload queue
         self._text_encode_results_to_deeplake()
+        time.sleep(3)
+    elif preprocessor_type == 'tvqa-encode':
+      while True:  # continuously check upload queue
+        self._tvqa_encode_results_to_deeplake()
         time.sleep(3)
 
   @ray.method(concurrency_group="single_thread_io")
@@ -145,12 +148,7 @@ class DeeplakeManager():
   def _text_encode_results_to_deeplake(self):
     try:
       with self.ds:
-        print("Is the db in read only mode?", self.ds.read_only)
-        # print("Info about dataset", self.ds.info)
-        # print("is this a view?", self.ds.is_view)
-        # print("get views?", self.ds.get_views())
-        print()
-        print()
+        assert self.ds.read_only == False, print("The db is in read only mode. This is not good.")
         while self.upload_queue.qsize() > 0:
           print("👉⬆️ Upload queue size:", self.upload_queue.qsize(), "⬆️👈")
           print(" STARTING AN ACTUAL UPLOAD... ")
@@ -180,6 +178,33 @@ class DeeplakeManager():
       print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
       pprint.pprint(input_dict)
       print("^^^ FULL text-embed INPUTS ^^^")
+      print(f"Error in {inspect.currentframe().f_code.co_name}: {e}")
+      print(f"Data being added during error:")
+      print(traceback.print_exc())
+
+  @ray.method(concurrency_group="single_thread_io")
+  def _tvqa_encode_results_to_deeplake(self):
+    try:
+      with self.ds:
+        assert self.ds.read_only == False, print("The db is in read only mode. This is not good.")
+        while self.upload_queue.qsize() > 0:
+          print("👉⬆️ Upload queue size:", self.upload_queue.qsize(), "⬆️👈")
+          print(" STARTING AN ACTUAL UPLOAD... ")
+          start = time.monotonic()
+          (context_vector_list, answer_list) = self.upload_queue.get(block=True, timeout=120)
+
+          for context_vector, answer in zip(context_vector_list, answer_list):
+            self.ds.context_vector.append(context_vector.numpy())
+            self.ds.label.append(answer)
+
+          print("✅ SUCCESSFULLY finished uploading to Deeplake! ✅")
+          print(f"⬆️⬆️ Time to upload text-batch: {(time.monotonic() - start)/60:.2f} minutes. (time/segment):"
+                f"{((time.monotonic() - start)/len(context_vector_list)):.2f} sec")
+          # remove flush, faster perf hopefully.
+          # print(self.ds.summary())
+          # self.ds.flush()
+    except Exception as e:
+      print("-----------❌❌❌❌------------START OF ERROR-----------❌❌❌❌------------")
       print(f"Error in {inspect.currentframe().f_code.co_name}: {e}")
       print(f"Data being added during error:")
       print(traceback.print_exc())
