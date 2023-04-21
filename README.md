@@ -1,7 +1,9 @@
 # 📃 Intuition
 I'm building my own multi media GPT; a competitor to [Merlot Reserve](https://rowanzellers.com/merlotreserve/) & [Vid2Seq](https://arxiv.org/abs/2302.14115). It's pre-trained from scratch on youtube data, mostly the YT-1B dataset of 20M curated youtube videos containing significant spoken language (English only).
 
-Project highlights & intuition with photos, check it out: https://twitter.com/KastanDay/status/1595991960380411905
+📜 Arxiv: https://arxiv.org/abs/2304.10505
+
+👉 Project highlights & intuition with photos, check it out: https://twitter.com/KastanDay/status/1595991960380411905
 
 ![(No 3D) VPT Architecture Diagram](https://user-images.githubusercontent.com/13607221/212575351-17d9b963-1f33-47cc-a298-db36e9814411.png)
 
